@@ -19,7 +19,16 @@ test("parses metadata, phrases and millisecond timing", () => {
   assert.equal(song.artist, "Test Artist");
   assert.equal(song.voices.length, 1);
   assert.equal(song.voices[0].phrases[0].text, "Hello");
+  assert.equal(song.voices[0].phrases[0].notes[1].text, "lo ");
   assert.equal(song.voices[0].phrases[0].notes[1].startMs, 1500);
+});
+
+test("preserves UltraStar trailing spaces between words", () => {
+  const source = `#TITLE:Spaces\n#BPM:120\n: 0 4 0 Hello \n: 4 4 0 world \n- 8\nE`;
+  const song = parseUltraStar(source);
+  const phrase = song.voices[0].phrases[0];
+  assert.equal(phrase.text, "Hello world");
+  assert.equal(phrase.notes[0].text, "Hello ");
 });
 
 test("parses duet voices and names", () => {

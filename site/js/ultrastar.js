@@ -66,7 +66,10 @@ export function parseUltraStar(source, filename = "song.txt") {
   const voiceOffset = () => offsets.get(currentVoice) || 0;
 
   rows.forEach((raw, rowIndex) => {
-    const row = raw.trimEnd();
+    // UltraStar stores word boundaries as trailing spaces in the lyric field.
+    // Keep the original line intact or words such as "Hello world" become
+    // "Helloworld" after the individual syllables are joined.
+    const row = raw;
     if (!row.trim()) return;
 
     if (row.startsWith("#")) {

@@ -32,36 +32,48 @@ function roundedRect(context, x, y, width, height, radius) {
   context.roundRect(x, y, width, height, safeRadius);
 }
 
-function pitchInPhraseRange(frequency, minPitch, maxPitch) {
-  const midi = frequencyToMidi(frequency);
+const PAST_WINDOW_MS = 1800;
+
+function pitchInRange(midi, minPitch, maxPitch) {
   if (midi == null || !Number.isFinite(midi)) return null;
   const center = (minPitch + maxPitch) / 2;
   return midi + Math.round((center - midi) / 12) * 12;
 }
 
-function drawPhrase(canvas, phrase, timeMs, color, frequency) {
+function drawLane(canvas, phrases, timeMs, color, pitchTrail, futureSeconds) {
   const { context, width, height } = resizeCanvas(canvas);
   context.clearRect(0, 0, width, height);
   context.fillStyle = "rgba(255,255,255,.018)";
   context.fillRect(0, 0, width, height);
-  if (!phrase) {
+  const windowStart = Math.max(0, timeMs - PAST_WINDOW_MS);
+  const windowEnd = timeMs + futureSeconds * 1000;
+  const notes = phrases
+    .flatMap((phrase) => phrase.notes)
+    .filter((note) => note.endMs >= windowStart && note.startMs <= windowEnd);
+  if (!notes.length) {
     context.fillStyle = "rgba(255,255,255,.45)";
     context.font = "600 15px system-ui";
     context.textAlign = "center";
-    context.fillText("Keine weitere Zeile", width / 2, height / 2);
+    context.fillText("Keine Noten in der Vorschau", width / 2, height / 2);
     return;
   }
 
-  const notes = phrase.notes;
   const pitches = notes.filter((note) => note.type !== "F").map((note) => note.pitch);
   const minPitch = (pitches.length ? Math.min(...pitches) : 0) - 2;
   const maxPitch = (pitches.length ? Math.max(...pitches) : 12) + 2;
   const range = Math.max(8, maxPitch - minPitch);
   const padX = 22;
   const padY = 16;
-  const span = Math.max(1, phrase.endMs - phrase.startMs);
+  const span = Math.max(1, windowEnd - windowStart);
   const usableWidth = width - 2 * padX;
   const usableHeight = height - 2 * padY;
+  const barHeight = Math.max(24, Math.min(38, height * 0.15));
+  const xForTime = (value) => padX + (value - windowStart) / span * usableWidth;
+  const yForPitch = (pitch) => {
+    const top = padY + barHeight / 2;
+    const pitchHeight = Math.max(1, usableHeight - barHeight);
+    return top + (maxPitch - pitch) / range * pitchHeight;
+  };
 
   context.strokeStyle = "rgba(255,255,255,.055)";
   context.lineWidth = 1;
@@ -74,12 +86,13 @@ function drawPhrase(canvas, phrase, timeMs, color, frequency) {
   }
 
   for (const note of notes) {
-    const x = padX + (note.startMs - phrase.startMs) / span * usableWidth;
-    const noteWidth = Math.max(12, (note.endMs - note.startMs) / span * usableWidth - 2);
-    const y = note.type === "F"
-      ? height / 2 - 13
-      : padY + (maxPitch - note.pitch) / range * usableHeight;
-    const barHeight = Math.max(28, Math.min(40, height * 0.16));
+    const rawX = xForTime(note.startMs);
+    const rawRight = xForTime(note.endMs);
+    const x = Math.max(padX, rawX);
+    const right = Math.min(width - padX, rawRight);
+    const noteWidth = Math.max(4, right - x - 2);
+    const centerY = note.type === "F" ? height / 2 : yForPitch(note.pitch);
+    const y = centerY - barHeight / 2;
     const active = timeMs >= note.startMs && timeMs <= note.endMs;
     context.fillStyle = active ? color : `${color}99`;
     roundedRect(context, x, y, noteWidth, barHeight, 7);
@@ -98,8 +111,37 @@ function drawPhrase(canvas, phrase, timeMs, color, frequency) {
     context.restore();
   }
 
-  const progress = Math.max(0, Math.min(1, (timeMs - phrase.startMs) / span));
-  const cursorX = padX + progress * usableWidth;
+  const visibleTrail = pitchTrail.filter((point) => point.timeMs >= windowStart && point.timeMs <= windowEnd);
+  context.save();
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  for (let index = 0; index < visibleTrail.length; index += 1) {
+    const point = visibleTrail[index];
+    const pitch = pitchInRange(point.pitch, minPitch, maxPitch);
+    if (pitch == null) continue;
+    const x = xForTime(point.timeMs);
+    const y = Math.max(padY, Math.min(height - padY, yForPitch(pitch)));
+    const feedbackColor = point.hit == null ? color : point.hit ? "#57f3a6" : "#ff5f7f";
+    context.strokeStyle = feedbackColor;
+    context.fillStyle = feedbackColor;
+    context.lineWidth = 6;
+    context.globalAlpha = 0.92;
+    const previous = visibleTrail[index - 1];
+    if (previous && point.timeMs - previous.timeMs < 130 && previous.hit === point.hit) {
+      const previousPitch = pitchInRange(previous.pitch, minPitch, maxPitch);
+      context.beginPath();
+      context.moveTo(xForTime(previous.timeMs), yForPitch(previousPitch));
+      context.lineTo(x, y);
+      context.stroke();
+    } else {
+      context.beginPath();
+      context.arc(x, y, 3.2, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
+  context.restore();
+
+  const cursorX = xForTime(timeMs);
   context.strokeStyle = "rgba(255,255,255,.88)";
   context.lineWidth = 2;
   context.beginPath();
@@ -107,10 +149,10 @@ function drawPhrase(canvas, phrase, timeMs, color, frequency) {
   context.lineTo(cursorX, height - 5);
   context.stroke();
 
-  const sungPitch = pitchInPhraseRange(frequency, minPitch, maxPitch);
-  if (sungPitch != null) {
-    const rawY = padY + (maxPitch - sungPitch) / range * usableHeight;
-    const markerY = Math.max(padY, Math.min(padY + usableHeight, rawY));
+  const latest = visibleTrail.at(-1);
+  const sungPitch = pitchInRange(latest?.pitch, minPitch, maxPitch);
+  if (sungPitch != null && Math.abs(latest.timeMs - timeMs) < 220) {
+    const markerY = Math.max(padY, Math.min(height - padY, yForPitch(sungPitch)));
     context.save();
     context.shadowColor = color;
     context.shadowBlur = 18;
@@ -157,7 +199,7 @@ function updateLyric(view, phrase, timeMs) {
 }
 
 export class KaraokeGame {
-  constructor({ root, audio, song, players, tracks, inputs, difficulty, inputLatencyMs = 0, onEnd }) {
+  constructor({ root, audio, song, players, tracks, inputs, difficulty, inputLatencyMs = 0, futureSeconds = 6, onEnd }) {
     this.root = root;
     this.audio = audio;
     this.song = song;
@@ -166,6 +208,7 @@ export class KaraokeGame {
     this.inputs = inputs;
     this.difficulty = difficulty;
     this.inputLatencyMs = inputLatencyMs;
+    this.futureSeconds = Math.max(2, Math.min(15, Number(futureSeconds) || 6));
     this.onEnd = onEnd;
     this.running = false;
     this.frame = 0;
@@ -201,7 +244,10 @@ export class KaraokeGame {
       const canvas = el("canvas", "pitch-lane");
       row.append(header, current, canvas, next);
       this.root.append(row);
-      this.rows.push({ row, current, next, canvas, level, score, phraseId: null, lyricNotes: [] });
+      this.rows.push({
+        row, current, next, canvas, level, score,
+        phraseId: null, lyricNotes: [], pitchTrail: [], smoothedPitch: null, lastTrailAt: 0,
+      });
     });
   }
 
@@ -241,15 +287,35 @@ export class KaraokeGame {
       const phrases = this.tracks[index];
       const window = currentAndNext(phrases, timeMs);
       const reading = this.inputs[index]?.read() || { frequency: null, rms: 0 };
+      const judgedNote = activeNote(phrases, judgeTime);
+      const feedback = scoreFrame(judgedNote, reading.frequency, this.difficulty, reading.rms);
+      const measuredPitch = frequencyToMidi(reading.frequency);
+      if (measuredPitch != null && reading.rms >= 0.008 && now - view.lastTrailAt >= 32) {
+        const reference = judgedNote?.pitch ?? view.smoothedPitch ?? measuredPitch;
+        const octavePitch = measuredPitch + Math.round((reference - measuredPitch) / 12) * 12;
+        view.smoothedPitch = view.smoothedPitch == null
+          ? octavePitch
+          : view.smoothedPitch * 0.68 + octavePitch * 0.32;
+        view.pitchTrail.push({
+          timeMs: judgeTime,
+          pitch: view.smoothedPitch,
+          hit: feedback.eligible ? feedback.hit : null,
+        });
+        view.lastTrailAt = now;
+      } else if (measuredPitch == null && now - view.lastTrailAt > 220) {
+        view.smoothedPitch = null;
+      }
+      const oldestTrailTime = timeMs - PAST_WINDOW_MS - 250;
+      while (view.pitchTrail[0]?.timeMs < oldestTrailTime) view.pitchTrail.shift();
       updateLyric(view, window.current, timeMs);
       view.next.textContent = window.next ? window.next.text : "";
-      drawPhrase(view.canvas, window.current, timeMs, this.players[index].color, reading.frequency);
+      drawLane(view.canvas, phrases, timeMs, this.players[index].color, view.pitchTrail, this.futureSeconds);
 
       view.level.firstElementChild.style.width = `${Math.min(100, Math.round(reading.rms * 420))}%`;
 
       if (shouldJudge) {
-        const note = activeNote(phrases, judgeTime);
-        const scored = scoreFrame(note, reading.frequency, this.difficulty, reading.rms);
+        const note = judgedNote;
+        const scored = feedback;
         if (scored.eligible) {
           const weight = note?.type === "*" || note?.type === "G" ? 2 : 1;
           const remaining = Math.max(0, note.endMs - judgeTime);
@@ -271,6 +337,10 @@ export class KaraokeGame {
   pause() {
     if (this.audio.paused) this.audio.play();
     else this.audio.pause();
+  }
+
+  setFutureSeconds(value) {
+    this.futureSeconds = Math.max(2, Math.min(15, Number(value) || 6));
   }
 
   async switchAudio(url) {

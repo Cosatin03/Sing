@@ -42,6 +42,7 @@ function saveSettings() {
     difficulty: $("#difficulty").value,
     output: $("#outputDevice").value,
     inputLatency: Number($("#inputLatency").value),
+    futureSeconds: Number($("#futureSeconds").value),
     musicVolume: Number($("#musicVolume").value),
     monitorEnabled: $("#monitorEnabled").checked,
     players: readPlayerRows(),
@@ -215,8 +216,8 @@ function renderVersionOptions(song) {
   select.value = song.instrumentalUrl ? "instrumental" : "original";
 }
 
-function syncRange(input, output) {
-  output.textContent = `${input.value} %`;
+function syncRange(input, output, suffix = "%") {
+  output.textContent = `${input.value} ${suffix}`;
 }
 
 function openSetup(song) {
@@ -225,9 +226,11 @@ function openSetup(song) {
   $("#playerCount").value = saved.playerCount || (song.isDuet ? 2 : 1);
   $("#difficulty").value = saved.difficulty || "normal";
   $("#inputLatency").value = saved.inputLatency ?? 120;
+  $("#futureSeconds").value = saved.futureSeconds ?? 6;
   $("#musicVolume").value = saved.musicVolume ?? 85;
   $("#monitorEnabled").checked = saved.monitorEnabled ?? false;
   syncRange($("#musicVolume"), $("#musicVolumeValue"));
+  syncRange($("#futureSeconds"), $("#futureSecondsValue"), "s");
   renderVersionOptions(song);
   fillDeviceSelect($("#outputDevice"), state.devices.outputs, "Lautsprecher", saved.output);
   renderPlayerSettings();
@@ -292,6 +295,8 @@ function createLiveRange(labelText, value, onInput, maximum = 100) {
 function renderGameMixer(players, inputs) {
   $("#gameMusicVolume").value = String(Math.round(audio.volume * 100));
   syncRange($("#gameMusicVolume"), $("#gameMusicVolumeValue"));
+  $("#gameFutureSeconds").value = String(saved.futureSeconds ?? 6);
+  syncRange($("#gameFutureSeconds"), $("#gameFutureSecondsValue"), "s");
   $("#gameMonitorEnabled").checked = $("#monitorEnabled").checked;
   const container = $("#gameMicMixers");
   container.replaceChildren();
@@ -365,6 +370,7 @@ async function startGame() {
       root: $("#gamePlayers"), audio, song: state.activeSong, players, tracks, inputs: openedInputs,
       difficulty: $("#difficulty").value,
       inputLatencyMs: Number($("#inputLatency").value) || 0,
+      futureSeconds: Number($("#futureSeconds").value) || 6,
       onEnd: showResults,
     });
     await state.game.start();
@@ -479,6 +485,7 @@ $("#folderInput").addEventListener("change", (event) => addFiles(event.target.fi
 $("#playerCount").addEventListener("change", renderPlayerSettings);
 $("#grantDevices").addEventListener("click", grantDevices);
 $("#musicVolume").addEventListener("input", () => syncRange($("#musicVolume"), $("#musicVolumeValue")));
+$("#futureSeconds").addEventListener("input", () => syncRange($("#futureSeconds"), $("#futureSecondsValue"), "s"));
 $("#startGame").addEventListener("click", startGame);
 $("#stopGame").addEventListener("click", stopGame);
 $("#pauseGame").addEventListener("click", () => state.game?.pause());
@@ -490,6 +497,13 @@ $("#gameMusicVolume").addEventListener("input", () => {
   audio.volume = Number($("#gameMusicVolume").value) / 100;
   syncRange($("#gameMusicVolume"), $("#gameMusicVolumeValue"));
   saved.musicVolume = Number($("#gameMusicVolume").value);
+  persistSettings();
+});
+$("#gameFutureSeconds").addEventListener("input", () => {
+  const value = Number($("#gameFutureSeconds").value);
+  state.game?.setFutureSeconds(value);
+  syncRange($("#gameFutureSeconds"), $("#gameFutureSecondsValue"), "s");
+  saved.futureSeconds = value;
   persistSettings();
 });
 $("#gameMonitorEnabled").addEventListener("change", () => {

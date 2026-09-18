@@ -84,6 +84,9 @@
         <label>Mikrofon-Latenz (ms)
           <input id="inputLatency" type="number" min="0" max="1000" step="10" value="120">
         </label>
+        <label class="range-field">Noten-Vorschau <output id="futureSecondsValue">6 s</output>
+          <input id="futureSeconds" type="range" min="2" max="15" step="1" value="6">
+        </label>
         <label class="range-field">Musiklautstärke <output id="musicVolumeValue">85 %</output>
           <input id="musicVolume" type="range" min="0" max="100" value="85">
         </label>
@@ -144,6 +147,9 @@
       <header><strong>Audiomixer</strong><button id="closeGameMixer" class="dialog__close" aria-label="Mixer schließen">×</button></header>
       <label class="range-field">Musik <output id="gameMusicVolumeValue">85 %</output>
         <input id="gameMusicVolume" type="range" min="0" max="100" value="85">
+      </label>
+      <label class="range-field">Noten-Vorschau <output id="gameFutureSecondsValue">6 s</output>
+        <input id="gameFutureSeconds" type="range" min="2" max="15" step="1" value="6">
       </label>
       <label class="switch-row switch-row--compact">
         <input id="gameMonitorEnabled" type="checkbox">

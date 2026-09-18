@@ -107,7 +107,7 @@ input[type="range"] { height: 22px; padding: 0; border: 0; accent-color: var(--p
 .game-pill { min-height: 38px; padding: 0 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.055); font-size: .72rem; font-weight: 800; cursor: pointer; }
 .game-pill.is-instrumental { color: #91f4cf; border-color: rgba(77,226,168,.25); background: rgba(77,226,168,.09); }
 .progress { position: relative; z-index: 5; height: 3px; background: rgba(255,255,255,.055); }
-.progress span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, var(--pink), var(--cyan)); }
+.progress span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, var(--pink), var(--cyan)); transition: width .08s linear; }
 .game-players { position: relative; z-index: 2; display: grid; gap: clamp(12px, 2vh, 24px); height: calc(100vh - 71px); padding: clamp(18px, 3vw, 48px) clamp(18px, 5vw, 84px); align-content: stretch; }
 .game-players[data-players="1"] { grid-template-columns: 1fr; }
 .game-players[data-players="2"] { grid-template-columns: 1fr; grid-template-rows: repeat(2, minmax(0, 1fr)); padding-block: 20px; }
@@ -123,11 +123,11 @@ input[type="range"] { height: 22px; padding: 0; border: 0; accent-color: var(--p
 .player-score { min-width: 60px; text-align: right; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
 .lyric { text-align: center; }
 .lyric--current { min-height: 1.35em; padding: clamp(10px, 1.6vh, 20px) 5px 5px; font-weight: 900; font-size: clamp(1.9rem, 4.2vw, 4.8rem); line-height: 1.06; letter-spacing: -.035em; text-wrap: balance; }
-.lyric-piece { color: rgba(255,255,255,.43); white-space: pre-wrap; transition: color .08s, text-shadow .08s; }
+.lyric-piece { display: inline; color: rgba(255,255,255,.43); white-space: pre-wrap; transition: color .14s ease, text-shadow .14s ease; }
 .lyric-piece.is-sung { color: rgba(255,255,255,.78); }
 .lyric-piece.is-active { color: white; text-shadow: 0 0 22px var(--player); }
 .lyric--next { min-height: 1.4em; color: rgba(255,255,255,.46); padding: 9px 5px 0; font-size: clamp(1rem, 1.6vw, 1.45rem); font-weight: 650; text-wrap: balance; }
-.pitch-lane { display: block; width: 100%; height: min(40vh, 360px); border-radius: 12px; }
+.pitch-lane { display: block; width: 100%; height: min(40vh, 360px); border-radius: 12px; image-rendering: auto; }
 .game-players[data-players="2"] .lyric--current { font-size: clamp(1.55rem, 2.7vw, 3.1rem); padding-top: 8px; }
 .game-players[data-players="2"] .pitch-lane { height: min(20vh, 190px); }
 .game-players[data-players="3"] .lyric--current, .game-players[data-players="4"] .lyric--current { font-size: clamp(1.25rem, 2vw, 2.25rem); padding-top: 7px; }
