@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090d1f">
+  <meta name="description" content="Browser-Karaoke mit UltraStar-TXT, lokalen Songs und mehreren USB-Mikrofonen.">
+  <title>Sing Local – Browser Karaoke</title>
+  <link rel="stylesheet" href="./assets/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Sing Local Startseite"><span>♪</span> Sing Local</a>
+    <div class="privacy-pill"><span></span> Songs bleiben auf diesem Gerät</div>
+  </header>
+
+  <main id="home" class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">UltraStar-Karaoke · ohne Server-Upload</p>
+        <h1>Deine Songs. Deine Mikros. Direkt im Browser.</h1>
+        <p class="hero__copy">Lade eine TXT mit ihrer Audiodatei oder gleich einen ganzen Song-Ordner. Nach dem Neuladen ist alles wieder weg.</p>
+        <div class="hero__actions">
+          <label class="button button--primary">
+            Dateien wählen
+            <input id="fileInput" type="file" multiple accept=".txt,.mp3,.wav,.ogg,.m4a,.aac,.flac,audio/*" hidden>
+          </label>
+          <label class="button button--ghost">
+            Song-Ordner wählen
+            <input id="folderInput" type="file" multiple webkitdirectory directory hidden>
+          </label>
+        </div>
+      </div>
+      <div id="dropZone" class="drop-zone" tabindex="0">
+        <div class="drop-zone__icon">⇧</div>
+        <strong>TXT + Audio hier ablegen</strong>
+        <span>MP3, WAV, OGG, M4A, AAC oder FLAC</span>
+      </div>
+    </section>
+
+    <section class="section-heading">
+      <div>
+        <p class="eyebrow">Temporäre Songliste</p>
+        <h2>Bereit zum Singen</h2>
+      </div>
+      <button id="clearSongs" class="text-button" hidden>Alle aus Speicher entfernen</button>
+    </section>
+    <div id="messages" class="messages" aria-live="polite"></div>
+    <section id="emptyState" class="empty-state">
+      <span>♫</span>
+      <h3>Noch keine Songs geladen</h3>
+      <p>Die TXT und die darin genannte Audiodatei müssen gemeinsam ausgewählt werden.</p>
+    </section>
+    <section id="songGrid" class="song-grid" aria-label="Geladene Songs"></section>
+  </main>
+
+  <dialog id="setupDialog" class="dialog">
+    <form method="dialog" class="dialog__card" id="setupForm">
+      <button class="dialog__close" value="cancel" aria-label="Schließen">×</button>
+      <p class="eyebrow">Spiel vorbereiten</p>
+      <h2 id="setupTitle">Song</h2>
+      <div class="form-grid form-grid--compact">
+        <label>Spieler
+          <select id="playerCount">
+            <option value="1">1 Spieler</option>
+            <option value="2" selected>2 Spieler</option>
+            <option value="3">3 Spieler</option>
+            <option value="4">4 Spieler</option>
+          </select>
+        </label>
+        <label>Schwierigkeit
+          <select id="difficulty">
+            <option value="easy">Easy</option>
+            <option value="normal" selected>Normal</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+        <label>Audioausgabe
+          <select id="outputDevice"><option value="default">Systemstandard</option></select>
+        </label>
+        <label>Mikrofon-Latenz (ms)
+          <input id="inputLatency" type="number" min="0" max="1000" step="10" value="120">
+        </label>
+      </div>
+      <div class="device-head">
+        <div><strong>Mikrofone zuweisen</strong><small>Erst freigeben, dann jedes USB-Mikro einem Spieler zuordnen.</small></div>
+        <button id="grantDevices" type="button" class="button button--small">Geräte freigeben</button>
+      </div>
+      <div id="playerSettings" class="player-settings"></div>
+      <p id="deviceHint" class="hint">Die Gerätebezeichnungen erscheinen nach der Browserfreigabe.</p>
+      <button id="startGame" type="button" class="button button--primary button--wide">Karaoke starten</button>
+    </form>
+  </dialog>
+
+  <dialog id="editorDialog" class="dialog dialog--wide">
+    <form method="dialog" class="dialog__card">
+      <button class="dialog__close" value="cancel" aria-label="Schließen">×</button>
+      <p class="eyebrow">Editor im Arbeitsspeicher</p>
+      <h2 id="editorTitle">UltraStar-TXT</h2>
+      <textarea id="editorText" class="editor" spellcheck="false"></textarea>
+      <div id="editorMessage" class="messages" aria-live="polite"></div>
+      <div class="dialog__actions">
+        <button id="downloadTxt" type="button" class="button button--ghost">TXT herunterladen</button>
+        <button id="applyEditor" type="button" class="button button--primary">Prüfen & übernehmen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <section id="gameScreen" class="game-screen" hidden>
+    <header class="game-topbar">
+      <div><span id="gameArtist"></span><strong id="gameTitle"></strong></div>
+      <div class="game-controls">
+        <button id="pauseGame" class="icon-button" aria-label="Pause oder fortsetzen">Ⅱ</button>
+        <button id="fullscreenGame" class="icon-button" aria-label="Vollbild">⛶</button>
+        <button id="stopGame" class="button button--danger">Beenden</button>
+      </div>
+    </header>
+    <div class="progress"><span id="gameProgress"></span></div>
+    <div id="gamePlayers" class="game-players"></div>
+  </section>
+
+  <dialog id="resultDialog" class="dialog">
+    <form method="dialog" class="dialog__card result-card">
+      <p class="eyebrow">Song beendet</p>
+      <h2>Ergebnis</h2>
+      <div id="results" class="results"></div>
+      <button class="button button--primary button--wide" value="close">Zur Songliste</button>
+    </form>
+  </dialog>
+
+  <audio id="songAudio" preload="auto"></audio>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
