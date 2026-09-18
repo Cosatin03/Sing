@@ -174,8 +174,13 @@ async function startGame() {
   button.textContent = "Mikrofone werden geöffnet …";
   try {
     saveSettings();
-    const inputs = await deviceManager.openInputs(players.map((player) => player.deviceId));
     audio.src = state.activeSong.audioUrl;
+    audio.muted = true;
+    await audio.play();
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+    const inputs = await deviceManager.openInputs(players.map((player) => player.deviceId));
     const output = await deviceManager.setOutput(audio, $("#outputDevice").value);
     if (!output.supported) $("#deviceHint").textContent = "Der Browser unterstützt keine Lautsprecherauswahl; Systemstandard wird verwendet.";
     const tracks = assignPhrases(state.activeSong, players.length);
@@ -193,6 +198,8 @@ async function startGame() {
     progressLoop();
     await state.game.start();
   } catch (error) {
+    audio.pause();
+    audio.muted = false;
     $("#deviceHint").textContent = `Start fehlgeschlagen: ${error.message}`;
     $("#home").hidden = false;
     $("#gameScreen").hidden = true;
