@@ -1,4 +1,4 @@
-import { activeNote, displayScore, frequencyToMidi, maximumScoreWeight, scoreFrame } from "./scoring.js";
+import { activeNote, displayScore, maximumScoreWeight, scoreFrame } from "./scoring.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -37,12 +37,6 @@ const PAST_WINDOW_MS = 1800;
 const ANALYSIS_INTERVAL_MS = 80;
 const RENDER_INTERVAL_MS = 1000 / 30;
 
-function pitchInRange(midi, minPitch, maxPitch) {
-  if (midi == null || !Number.isFinite(midi)) return null;
-  const center = (minPitch + maxPitch) / 2;
-  return midi + Math.round((center - midi) / 12) * 12;
-}
-
 function notesInWindow(notes, windowStart, windowEnd, startIndex = 0) {
   let first = startIndex;
   while (first < notes.length && notes[first].endMs < windowStart) first += 1;
@@ -51,23 +45,20 @@ function notesInWindow(notes, windowStart, windowEnd, startIndex = 0) {
   return { notes: notes.slice(first, last), startIndex: first };
 }
 
-function targetPitchBounds(notes, timeMs, futureSeconds) {
+export function targetPitchBounds(notes) {
   const pitched = notes.filter((note) => note.type !== "F");
   if (!pitched.length) return { min: -6, max: 6 };
-  const focusEnd = timeMs + Math.min(3500, futureSeconds * 1000);
-  const nearby = pitched.filter((note) => note.endMs >= timeMs - 500 && note.startMs <= focusEnd);
-  const source = nearby.length ? nearby : pitched;
-  const values = source.map((note) => note.pitch);
+  const values = pitched.map((note) => note.pitch);
   const low = Math.min(...values);
   const high = Math.max(...values);
   const center = (low + high) / 2;
-  // Keep a readable semitone distance instead of squeezing a whole song range
-  // into one row. Extreme upcoming notes wait at the top/bottom edge.
-  const range = Math.max(12, Math.min(20, high - low + 4));
+  // Every visible note must remain inside the lane. The previous 20-semitone
+  // cap pushed later notes onto one shared edge for previews above ~3 seconds.
+  const range = Math.max(12, high - low + 4);
   return { min: center - range / 2, max: center + range / 2 };
 }
 
-function drawLane(canvas, notes, timeMs, color, pitchTrail, futureSeconds, pitchScale) {
+function drawLane(canvas, notes, timeMs, color, hitSegments, futureSeconds, pitchScale) {
   const { context, width, height } = resizeCanvas(canvas);
   context.clearRect(0, 0, width, height);
   context.fillStyle = "rgba(255,255,255,.018)";
@@ -82,7 +73,7 @@ function drawLane(canvas, notes, timeMs, color, pitchTrail, futureSeconds, pitch
     return;
   }
 
-  const target = targetPitchBounds(notes, timeMs, futureSeconds);
+  const target = targetPitchBounds(notes);
   if (pitchScale.min == null) {
     pitchScale.min = target.min;
     pitchScale.max = target.max;
@@ -103,9 +94,14 @@ function drawLane(canvas, notes, timeMs, color, pitchTrail, futureSeconds, pitch
   const yForPitch = (pitch) => {
     const top = padY + barHeight / 2;
     const pitchHeight = Math.max(1, usableHeight - barHeight);
-    const raw = top + (maxPitch - pitch) / range * pitchHeight;
-    return Math.max(top, Math.min(height - padY - barHeight / 2, raw));
+    return top + (maxPitch - pitch) / range * pitchHeight;
   };
+
+  const hitsByNote = new Map();
+  for (const segment of hitSegments) {
+    if (!hitsByNote.has(segment.note)) hitsByNote.set(segment.note, []);
+    hitsByNote.get(segment.note).push(segment);
+  }
 
   context.strokeStyle = "rgba(255,255,255,.055)";
   context.lineWidth = 1;
@@ -126,9 +122,24 @@ function drawLane(canvas, notes, timeMs, color, pitchTrail, futureSeconds, pitch
     const centerY = note.type === "F" ? height / 2 : yForPitch(note.pitch);
     const y = centerY - barHeight / 2;
     const active = timeMs >= note.startMs && timeMs <= note.endMs;
-    context.fillStyle = active ? color : `${color}99`;
+    context.fillStyle = active ? `${color}52` : `${color}32`;
     roundedRect(context, x, y, noteWidth, barHeight, 7);
     context.fill();
+
+    const hits = hitsByNote.get(note) || [];
+    if (hits.length) {
+      context.save();
+      roundedRect(context, x, y, noteWidth, barHeight, 7);
+      context.clip();
+      context.fillStyle = color;
+      for (const hit of hits) {
+        const hitX = Math.max(x, xForTime(hit.startMs));
+        const hitRight = Math.min(right - 2, xForTime(hit.endMs));
+        if (hitRight > hitX) context.fillRect(hitX, y, hitRight - hitX, barHeight);
+      }
+      context.restore();
+    }
+
     context.strokeStyle = active ? "white" : "rgba(255,255,255,.35)";
     context.lineWidth = active ? 2 : 1;
     context.stroke();
@@ -143,36 +154,6 @@ function drawLane(canvas, notes, timeMs, color, pitchTrail, futureSeconds, pitch
     context.restore();
   }
 
-  const visibleTrail = pitchTrail;
-  context.save();
-  context.lineCap = "round";
-  context.lineJoin = "round";
-  for (let index = 0; index < visibleTrail.length; index += 1) {
-    const point = visibleTrail[index];
-    const pitch = pitchInRange(point.pitch, minPitch, maxPitch);
-    if (pitch == null) continue;
-    const x = xForTime(point.timeMs);
-    const y = Math.max(padY, Math.min(height - padY, yForPitch(pitch)));
-    const feedbackColor = point.hit == null ? color : point.hit ? "#57f3a6" : "#ff5f7f";
-    context.strokeStyle = feedbackColor;
-    context.fillStyle = feedbackColor;
-    context.lineWidth = 6;
-    context.globalAlpha = 0.92;
-    const previous = visibleTrail[index - 1];
-    if (previous && point.timeMs - previous.timeMs < 130 && previous.hit === point.hit) {
-      const previousPitch = pitchInRange(previous.pitch, minPitch, maxPitch);
-      context.beginPath();
-      context.moveTo(xForTime(previous.timeMs), yForPitch(previousPitch));
-      context.lineTo(x, y);
-      context.stroke();
-    } else {
-      context.beginPath();
-      context.arc(x, y, 3.2, 0, Math.PI * 2);
-      context.fill();
-    }
-  }
-  context.restore();
-
   const cursorX = xForTime(timeMs);
   context.strokeStyle = "rgba(255,255,255,.88)";
   context.lineWidth = 2;
@@ -180,26 +161,6 @@ function drawLane(canvas, notes, timeMs, color, pitchTrail, futureSeconds, pitch
   context.moveTo(cursorX, 5);
   context.lineTo(cursorX, height - 5);
   context.stroke();
-
-  const latest = visibleTrail.at(-1);
-  const sungPitch = pitchInRange(latest?.pitch, minPitch, maxPitch);
-  if (sungPitch != null && Math.abs(latest.timeMs - timeMs) < 220) {
-    const markerY = Math.max(padY, Math.min(height - padY, yForPitch(sungPitch)));
-    context.save();
-    context.shadowColor = color;
-    context.shadowBlur = 18;
-    context.strokeStyle = color;
-    context.fillStyle = "white";
-    context.lineWidth = 4;
-    context.beginPath();
-    context.moveTo(cursorX - 17, markerY);
-    context.lineTo(cursorX + 17, markerY);
-    context.stroke();
-    context.beginPath();
-    context.arc(cursorX, markerY, 6, 0, Math.PI * 2);
-    context.fill();
-    context.restore();
-  }
 }
 
 function lyricPieceText(text) {
@@ -276,11 +237,11 @@ export class KaraokeGame {
       const current = el("div", "lyric lyric--current", "Bereit …");
       const next = el("div", "lyric lyric--next", "");
       const canvas = el("canvas", "pitch-lane");
-      row.append(header, current, canvas, next);
+      row.append(header, current, next, canvas);
       this.root.append(row);
       this.rows.push({
         row, current, next, canvas, level, score,
-        phraseId: null, lyricNotes: [], pitchTrail: [], smoothedPitch: null,
+        phraseId: null, lyricNotes: [], hitSegments: [],
         reading: { frequency: null, rms: 0 }, visibleStart: 0, pitchScale: { min: null, max: null },
       });
     });
@@ -325,26 +286,21 @@ export class KaraokeGame {
         view.reading = this.inputs[index]?.read() || { frequency: null, rms: 0 };
         const note = activeNote(phrases, judgeTime);
         const scored = scoreFrame(note, view.reading.frequency, this.difficulty, view.reading.rms);
-        const measuredPitch = frequencyToMidi(view.reading.frequency);
-        if (measuredPitch != null && view.reading.rms >= 0.008) {
-          const reference = note?.pitch ?? view.smoothedPitch ?? measuredPitch;
-          const octavePitch = measuredPitch + Math.round((reference - measuredPitch) / 12) * 12;
-          view.smoothedPitch = view.smoothedPitch == null
-            ? octavePitch
-            : view.smoothedPitch * 0.68 + octavePitch * 0.32;
-          view.pitchTrail.push({
-            timeMs: judgeTime,
-            pitch: view.smoothedPitch,
-            hit: scored.eligible ? scored.hit : null,
-          });
-        } else {
-          view.smoothedPitch = null;
-        }
         if (scored.eligible) {
           const weight = note?.type === "*" || note?.type === "G" ? 2 : 1;
           const remaining = Math.max(0, note.endMs - judgeTime);
           const coveredDuration = Math.min(judgeDuration, remaining);
-          if (scored.hit) this.stats[index].earned += scored.quality * coveredDuration * weight;
+          if (scored.hit) {
+            this.stats[index].earned += scored.quality * coveredDuration * weight;
+            const startMs = Math.max(note.startMs, judgeTime - judgeDuration);
+            const endMs = Math.min(note.endMs, judgeTime);
+            const previous = view.hitSegments.at(-1);
+            if (previous?.note === note && startMs - previous.endMs < ANALYSIS_INTERVAL_MS * 1.5) {
+              previous.endMs = Math.max(previous.endMs, endMs);
+            } else if (endMs > startMs) {
+              view.hitSegments.push({ note, startMs, endMs });
+            }
+          }
           this.stats[index].score = displayScore(this.stats[index].earned, this.stats[index].maximum);
           view.score.textContent = this.stats[index].score.toLocaleString("de-DE");
           view.row.classList.toggle("is-hit", scored.hit);
@@ -359,13 +315,12 @@ export class KaraokeGame {
         const windowEnd = timeMs + this.futureSeconds * 1000;
         const visible = notesInWindow(this.noteTracks[index], windowStart, windowEnd, view.visibleStart);
         view.visibleStart = visible.startIndex;
-        const oldestTrailTime = windowStart - 250;
-        while (view.pitchTrail[0]?.timeMs < oldestTrailTime) view.pitchTrail.shift();
+        while (view.hitSegments[0]?.endMs < windowStart) view.hitSegments.shift();
         updateLyric(view, window.current, timeMs);
         view.next.textContent = window.next ? window.next.text : "";
         drawLane(
           view.canvas, visible.notes, timeMs, this.players[index].color,
-          view.pitchTrail, this.futureSeconds, view.pitchScale,
+          view.hitSegments, this.futureSeconds, view.pitchScale,
         );
         view.level.firstElementChild.style.width = `${Math.min(100, Math.round(view.reading.rms * 420))}%`;
       }
