@@ -15,7 +15,7 @@ function currentAndNext(phrases, timeMs) {
 
 function resizeCanvas(canvas) {
   // Very high DPR canvases are expensive and add no useful detail here.
-  const ratio = Math.min(2, window.devicePixelRatio || 1);
+  const ratio = 1;
   const width = Math.max(320, canvas.clientWidth);
   const height = Math.max(145, canvas.clientHeight);
   if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
@@ -34,7 +34,7 @@ function roundedRect(context, x, y, width, height, radius) {
 }
 
 const PAST_WINDOW_MS = 1800;
-const ANALYSIS_INTERVAL_MS = 80;
+const ANALYSIS_INTERVAL_MS = 120;
 const RENDER_INTERVAL_MS = 1000 / 30;
 
 function notesInWindow(notes, windowStart, windowEnd, startIndex = 0) {
@@ -245,11 +245,10 @@ export class KaraokeGame {
       const identity = el("div", "player-stage__identity");
       identity.append(el("span", "player-dot"), el("strong", "", player.name));
       const telemetry = el("div", "player-stage__telemetry");
-      const level = el("span", "mic-level");
-      level.title = "Mikrofonpegel";
-      level.append(el("i", ""));
+      const micStatus = el("span", "mic-status is-connected");
+      micStatus.title = "Mikrofon verbunden";
       const score = el("strong", "player-score", "0");
-      telemetry.append(level, score);
+      telemetry.append(micStatus, score);
       header.append(identity, telemetry);
 
       const current = el("div", "lyric lyric--current", "Bereit …");
@@ -258,10 +257,10 @@ export class KaraokeGame {
       row.append(header, current, next, canvas);
       this.root.append(row);
       this.rows.push({
-        row, current, next, canvas, level, score,
+        row, current, next, canvas, micStatus, score,
         phraseId: null, lyricNotes: [], feedbackSegments: [],
         reading: { frequency: null, rms: 0, sampleId: 0, timeMs: 0 },
-        lastSampleId: 0, lastReadingTime: null, levelPercent: -1,
+        lastSampleId: 0, lastReadingTime: null, connectionStatus: "connected",
         visibleStart: 0, pitchScale: { min: null, max: null },
       });
     });
@@ -333,9 +332,6 @@ export class KaraokeGame {
               this.stats[index].score = nextScore;
               view.score.textContent = nextScore.toLocaleString("de-DE");
             }
-            view.row.classList.toggle("is-hit", scored.hit);
-          } else {
-            view.row.classList.remove("is-hit");
           }
           view.lastSampleId = view.reading.sampleId;
           view.lastReadingTime = readingTime;
@@ -343,6 +339,14 @@ export class KaraokeGame {
       }
 
       if (shouldRender) {
+        const connectionStatus = this.inputs[index]?.status || "connected";
+        if (connectionStatus !== view.connectionStatus) {
+          view.connectionStatus = connectionStatus;
+          const connected = connectionStatus === "connected";
+          view.micStatus.classList.toggle("is-connected", connected);
+          view.micStatus.classList.toggle("is-reconnecting", !connected);
+          view.micStatus.title = connected ? "Mikrofon verbunden" : "Mikrofon wird wieder verbunden …";
+        }
         const window = currentAndNext(phrases, timeMs);
         const windowStart = Math.max(0, timeMs - PAST_WINDOW_MS);
         const windowEnd = timeMs + this.futureSeconds * 1000;
@@ -356,11 +360,6 @@ export class KaraokeGame {
           view.canvas, visible.notes, timeMs, this.players[index].color,
           view.feedbackSegments, this.futureSeconds, view.pitchScale,
         );
-        const levelPercent = Math.min(100, Math.round(view.reading.rms * 420));
-        if (levelPercent !== view.levelPercent) {
-          view.levelPercent = levelPercent;
-          view.level.firstElementChild.style.width = `${levelPercent}%`;
-        }
       }
     });
 

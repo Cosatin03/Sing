@@ -17,7 +17,7 @@ export function detectPitch(samples, sampleRate, options = {}) {
     let difference = 0;
     let energy = 0;
     const length = samples.length - lag;
-    for (let index = 0; index < length; index += 1) {
+    for (let index = 0; index < length; index += 2) {
       const a = samples[index];
       const b = samples[index + lag];
       const delta = a - b;

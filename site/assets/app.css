@@ -112,14 +112,14 @@ input[type="range"] { height: 22px; padding: 0; border: 0; accent-color: var(--p
 .game-players[data-players="1"] { grid-template-columns: 1fr; }
 .game-players[data-players="2"] { grid-template-columns: 1fr; grid-template-rows: repeat(2, minmax(0, 1fr)); padding-block: 20px; }
 .game-players[data-players="3"], .game-players[data-players="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); padding: 18px 28px; }
-.player-stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto auto minmax(120px, 1fr); align-content: center; padding: clamp(12px, 1.7vw, 25px); border: 1px solid rgba(255,255,255,.065); border-left: 3px solid var(--player); border-radius: 18px; background: rgba(10,14,30,.82); transition: border-color .12s, background-color .12s; }
-.player-stage.is-hit { border-color: color-mix(in srgb, var(--player) 55%, rgba(255,255,255,.1)); background: color-mix(in srgb, var(--player) 7%, #0a0e1e); }
+.player-stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto auto minmax(120px, 1fr); align-content: center; padding: clamp(12px, 1.7vw, 25px); border: 1px solid rgba(255,255,255,.065); border-left: 3px solid var(--player); border-radius: 18px; background: rgba(10,14,30,.82); }
 .player-stage__header, .player-stage__identity, .player-stage__telemetry { display: flex; align-items: center; gap: 9px; }
 .player-stage__header { justify-content: space-between; }
 .player-stage__telemetry { justify-content: end; flex-wrap: wrap; }
 .player-dot { width: 10px; height: 10px; background: var(--player); border-radius: 50%; box-shadow: 0 0 12px var(--player); }
-.mic-level { display: block; width: 54px; height: 5px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.1); }
-.mic-level i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--player); transition: width .08s linear; }
+.mic-status { width: 8px; height: 8px; border-radius: 50%; background: #ffb14a; box-shadow: 0 0 8px rgba(255,177,74,.55); }
+.mic-status.is-connected { background: #57f3a6; box-shadow: 0 0 8px rgba(87,243,166,.55); }
+.mic-status.is-reconnecting { animation: mic-pulse 1s ease-in-out infinite; }
 .player-score { min-width: 60px; text-align: right; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
 .lyric { text-align: center; }
 .lyric--current { min-height: 1.35em; padding: clamp(10px, 1.6vh, 20px) 5px 5px; font-weight: 900; font-size: clamp(1.9rem, 4.2vw, 4.8rem); line-height: 1.06; letter-spacing: -.035em; text-wrap: balance; }
@@ -164,3 +164,5 @@ input[type="range"] { height: 22px; padding: 0; border: 0; accent-color: var(--p
 }
 
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+@keyframes mic-pulse { 50% { opacity: .3; } }
