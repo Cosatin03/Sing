@@ -48,7 +48,7 @@ npm test
 
 ## Deployment
 
-Der Workflow `.github/workflows/pages.yml` testet den Parser und veröffentlicht den Ordner `site` über GitHub Pages. In den Repository-Einstellungen muss unter **Pages → Build and deployment → Source** einmalig **GitHub Actions** ausgewählt sein.
+Der Workflow `.github/workflows/pages.yml` testet den Parser, aktiviert GitHub Pages und veröffentlicht den Ordner `site`. Falls die automatische Aktivierung durch Repository-Richtlinien blockiert wird, unter **Settings → Pages → Build and deployment → Source** einmalig **GitHub Actions** auswählen.
 
 ## Technische Hinweise
 
