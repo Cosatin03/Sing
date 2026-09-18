@@ -17,3 +17,13 @@ test("rejects silence below the noise gate", () => {
   const result = detectPitch(new Float32Array(2048), 48000);
   assert.equal(result.frequency, null);
 });
+
+test("prefers the fundamental peak over a low subharmonic", () => {
+  const sampleRate = 48000;
+  const samples = new Float32Array(1024);
+  for (let index = 0; index < samples.length; index += 1) {
+    samples[index] = 0.35 * Math.sin(2 * Math.PI * 880 * index / sampleRate);
+  }
+  const result = detectPitch(samples, sampleRate);
+  assert.ok(Math.abs(result.frequency - 880) < 8, `detected ${result.frequency}`);
+});

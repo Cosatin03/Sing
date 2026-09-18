@@ -14,7 +14,8 @@ function currentAndNext(phrases, timeMs) {
 }
 
 function resizeCanvas(canvas) {
-  const ratio = window.devicePixelRatio || 1;
+  // Very high DPR canvases are expensive and add no useful detail here.
+  const ratio = Math.min(2, window.devicePixelRatio || 1);
   const width = Math.max(320, canvas.clientWidth);
   const height = Math.max(145, canvas.clientHeight);
   if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
@@ -33,6 +34,8 @@ function roundedRect(context, x, y, width, height, radius) {
 }
 
 const PAST_WINDOW_MS = 1800;
+const ANALYSIS_INTERVAL_MS = 80;
+const RENDER_INTERVAL_MS = 1000 / 30;
 
 function pitchInRange(midi, minPitch, maxPitch) {
   if (midi == null || !Number.isFinite(midi)) return null;
@@ -40,16 +43,37 @@ function pitchInRange(midi, minPitch, maxPitch) {
   return midi + Math.round((center - midi) / 12) * 12;
 }
 
-function drawLane(canvas, phrases, timeMs, color, pitchTrail, futureSeconds) {
+function notesInWindow(notes, windowStart, windowEnd, startIndex = 0) {
+  let first = startIndex;
+  while (first < notes.length && notes[first].endMs < windowStart) first += 1;
+  let last = first;
+  while (last < notes.length && notes[last].startMs <= windowEnd) last += 1;
+  return { notes: notes.slice(first, last), startIndex: first };
+}
+
+function targetPitchBounds(notes, timeMs, futureSeconds) {
+  const pitched = notes.filter((note) => note.type !== "F");
+  if (!pitched.length) return { min: -6, max: 6 };
+  const focusEnd = timeMs + Math.min(3500, futureSeconds * 1000);
+  const nearby = pitched.filter((note) => note.endMs >= timeMs - 500 && note.startMs <= focusEnd);
+  const source = nearby.length ? nearby : pitched;
+  const values = source.map((note) => note.pitch);
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const center = (low + high) / 2;
+  // Keep a readable semitone distance instead of squeezing a whole song range
+  // into one row. Extreme upcoming notes wait at the top/bottom edge.
+  const range = Math.max(12, Math.min(20, high - low + 4));
+  return { min: center - range / 2, max: center + range / 2 };
+}
+
+function drawLane(canvas, notes, timeMs, color, pitchTrail, futureSeconds, pitchScale) {
   const { context, width, height } = resizeCanvas(canvas);
   context.clearRect(0, 0, width, height);
   context.fillStyle = "rgba(255,255,255,.018)";
   context.fillRect(0, 0, width, height);
   const windowStart = Math.max(0, timeMs - PAST_WINDOW_MS);
   const windowEnd = timeMs + futureSeconds * 1000;
-  const notes = phrases
-    .flatMap((phrase) => phrase.notes)
-    .filter((note) => note.endMs >= windowStart && note.startMs <= windowEnd);
   if (!notes.length) {
     context.fillStyle = "rgba(255,255,255,.45)";
     context.font = "600 15px system-ui";
@@ -58,21 +82,29 @@ function drawLane(canvas, phrases, timeMs, color, pitchTrail, futureSeconds) {
     return;
   }
 
-  const pitches = notes.filter((note) => note.type !== "F").map((note) => note.pitch);
-  const minPitch = (pitches.length ? Math.min(...pitches) : 0) - 2;
-  const maxPitch = (pitches.length ? Math.max(...pitches) : 12) + 2;
-  const range = Math.max(8, maxPitch - minPitch);
+  const target = targetPitchBounds(notes, timeMs, futureSeconds);
+  if (pitchScale.min == null) {
+    pitchScale.min = target.min;
+    pitchScale.max = target.max;
+  } else {
+    pitchScale.min += (target.min - pitchScale.min) * 0.16;
+    pitchScale.max += (target.max - pitchScale.max) * 0.16;
+  }
+  const minPitch = pitchScale.min;
+  const maxPitch = pitchScale.max;
+  const range = Math.max(1, maxPitch - minPitch);
   const padX = 22;
   const padY = 16;
   const span = Math.max(1, windowEnd - windowStart);
   const usableWidth = width - 2 * padX;
   const usableHeight = height - 2 * padY;
-  const barHeight = Math.max(24, Math.min(38, height * 0.15));
+  const barHeight = Math.max(12, Math.min(20, height * 0.085));
   const xForTime = (value) => padX + (value - windowStart) / span * usableWidth;
   const yForPitch = (pitch) => {
     const top = padY + barHeight / 2;
     const pitchHeight = Math.max(1, usableHeight - barHeight);
-    return top + (maxPitch - pitch) / range * pitchHeight;
+    const raw = top + (maxPitch - pitch) / range * pitchHeight;
+    return Math.max(top, Math.min(height - padY - barHeight / 2, raw));
   };
 
   context.strokeStyle = "rgba(255,255,255,.055)";
@@ -111,7 +143,7 @@ function drawLane(canvas, phrases, timeMs, color, pitchTrail, futureSeconds) {
     context.restore();
   }
 
-  const visibleTrail = pitchTrail.filter((point) => point.timeMs >= windowStart && point.timeMs <= windowEnd);
+  const visibleTrail = pitchTrail;
   context.save();
   context.lineCap = "round";
   context.lineJoin = "round";
@@ -213,6 +245,8 @@ export class KaraokeGame {
     this.running = false;
     this.frame = 0;
     this.lastJudge = 0;
+    this.lastRender = 0;
+    this.noteTracks = tracks.map((phrases) => phrases.flatMap((phrase) => phrase.notes));
     this.stats = tracks.map((phrases) => ({
       earned: 0,
       maximum: maximumScoreWeight(phrases),
@@ -246,7 +280,8 @@ export class KaraokeGame {
       this.root.append(row);
       this.rows.push({
         row, current, next, canvas, level, score,
-        phraseId: null, lyricNotes: [], pitchTrail: [], smoothedPitch: null, lastTrailAt: 0,
+        phraseId: null, lyricNotes: [], pitchTrail: [], smoothedPitch: null,
+        reading: { frequency: null, rms: 0 }, visibleStart: 0, pitchScale: { min: null, max: null },
       });
     });
   }
@@ -271,8 +306,9 @@ export class KaraokeGame {
     const now = performance.now();
     const timeMs = this.audio.currentTime * 1000;
     const judgeTime = timeMs - this.inputLatencyMs;
-    const shouldJudge = !this.audio.paused && now - this.lastJudge >= 45;
-    const judgeDuration = Math.min(100, Math.max(0, now - this.lastJudge));
+    const shouldJudge = !this.audio.paused && now - this.lastJudge >= ANALYSIS_INTERVAL_MS;
+    const shouldRender = now - this.lastRender >= (this.audio.paused ? 100 : RENDER_INTERVAL_MS);
+    const judgeDuration = Math.min(120, Math.max(0, now - this.lastJudge));
 
     if (this.audio.ended || (
       Number.isFinite(this.audio.duration)
@@ -285,37 +321,25 @@ export class KaraokeGame {
 
     this.rows.forEach((view, index) => {
       const phrases = this.tracks[index];
-      const window = currentAndNext(phrases, timeMs);
-      const reading = this.inputs[index]?.read() || { frequency: null, rms: 0 };
-      const judgedNote = activeNote(phrases, judgeTime);
-      const feedback = scoreFrame(judgedNote, reading.frequency, this.difficulty, reading.rms);
-      const measuredPitch = frequencyToMidi(reading.frequency);
-      if (measuredPitch != null && reading.rms >= 0.008 && now - view.lastTrailAt >= 32) {
-        const reference = judgedNote?.pitch ?? view.smoothedPitch ?? measuredPitch;
-        const octavePitch = measuredPitch + Math.round((reference - measuredPitch) / 12) * 12;
-        view.smoothedPitch = view.smoothedPitch == null
-          ? octavePitch
-          : view.smoothedPitch * 0.68 + octavePitch * 0.32;
-        view.pitchTrail.push({
-          timeMs: judgeTime,
-          pitch: view.smoothedPitch,
-          hit: feedback.eligible ? feedback.hit : null,
-        });
-        view.lastTrailAt = now;
-      } else if (measuredPitch == null && now - view.lastTrailAt > 220) {
-        view.smoothedPitch = null;
-      }
-      const oldestTrailTime = timeMs - PAST_WINDOW_MS - 250;
-      while (view.pitchTrail[0]?.timeMs < oldestTrailTime) view.pitchTrail.shift();
-      updateLyric(view, window.current, timeMs);
-      view.next.textContent = window.next ? window.next.text : "";
-      drawLane(view.canvas, phrases, timeMs, this.players[index].color, view.pitchTrail, this.futureSeconds);
-
-      view.level.firstElementChild.style.width = `${Math.min(100, Math.round(reading.rms * 420))}%`;
-
       if (shouldJudge) {
-        const note = judgedNote;
-        const scored = feedback;
+        view.reading = this.inputs[index]?.read() || { frequency: null, rms: 0 };
+        const note = activeNote(phrases, judgeTime);
+        const scored = scoreFrame(note, view.reading.frequency, this.difficulty, view.reading.rms);
+        const measuredPitch = frequencyToMidi(view.reading.frequency);
+        if (measuredPitch != null && view.reading.rms >= 0.008) {
+          const reference = note?.pitch ?? view.smoothedPitch ?? measuredPitch;
+          const octavePitch = measuredPitch + Math.round((reference - measuredPitch) / 12) * 12;
+          view.smoothedPitch = view.smoothedPitch == null
+            ? octavePitch
+            : view.smoothedPitch * 0.68 + octavePitch * 0.32;
+          view.pitchTrail.push({
+            timeMs: judgeTime,
+            pitch: view.smoothedPitch,
+            hit: scored.eligible ? scored.hit : null,
+          });
+        } else {
+          view.smoothedPitch = null;
+        }
         if (scored.eligible) {
           const weight = note?.type === "*" || note?.type === "G" ? 2 : 1;
           const remaining = Math.max(0, note.endMs - judgeTime);
@@ -328,9 +352,27 @@ export class KaraokeGame {
           view.row.classList.remove("is-hit");
         }
       }
+
+      if (shouldRender) {
+        const window = currentAndNext(phrases, timeMs);
+        const windowStart = Math.max(0, timeMs - PAST_WINDOW_MS);
+        const windowEnd = timeMs + this.futureSeconds * 1000;
+        const visible = notesInWindow(this.noteTracks[index], windowStart, windowEnd, view.visibleStart);
+        view.visibleStart = visible.startIndex;
+        const oldestTrailTime = windowStart - 250;
+        while (view.pitchTrail[0]?.timeMs < oldestTrailTime) view.pitchTrail.shift();
+        updateLyric(view, window.current, timeMs);
+        view.next.textContent = window.next ? window.next.text : "";
+        drawLane(
+          view.canvas, visible.notes, timeMs, this.players[index].color,
+          view.pitchTrail, this.futureSeconds, view.pitchScale,
+        );
+        view.level.firstElementChild.style.width = `${Math.min(100, Math.round(view.reading.rms * 420))}%`;
+      }
     });
 
     if (shouldJudge || this.audio.paused) this.lastJudge = now;
+    if (shouldRender) this.lastRender = now;
     this.frame = requestAnimationFrame(this.loop);
   };
 

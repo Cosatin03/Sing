@@ -32,7 +32,22 @@ export function detectPitch(samples, sampleRate, options = {}) {
     }
   }
 
-  if (bestLag < 0 || bestCorrelation < 1 - threshold) return { frequency: null, clarity: bestCorrelation, rms };
+  const clarityFloor = 1 - threshold;
+  // Prefer the first strong local peak. Picking the absolute highest peak can
+  // lock onto a much lower subharmonic and makes the displayed pitch jump.
+  for (let lag = minLag + 1; lag < maxLag; lag += 1) {
+    if (
+      correlations[lag] >= clarityFloor
+      && correlations[lag] >= correlations[lag - 1]
+      && correlations[lag] >= correlations[lag + 1]
+    ) {
+      bestLag = lag;
+      bestCorrelation = correlations[lag];
+      break;
+    }
+  }
+
+  if (bestLag < 0 || bestCorrelation < clarityFloor) return { frequency: null, clarity: bestCorrelation, rms };
   const left = correlations[bestLag - 1] || bestCorrelation;
   const right = correlations[bestLag + 1] || bestCorrelation;
   const denominator = 2 * (2 * bestCorrelation - left - right);
@@ -52,7 +67,9 @@ export class PitchInput {
     this.inputGain = audioContext.createGain();
     this.monitorGain = audioContext.createGain();
     this.analyser = audioContext.createAnalyser();
-    this.analyser.fftSize = 4096;
+    // A 1024-sample window covers the configured vocal range while keeping
+    // multi-player analysis responsive on a Raspberry Pi.
+    this.analyser.fftSize = 1024;
     this.analyser.smoothingTimeConstant = 0;
     this.buffer = new Float32Array(this.analyser.fftSize);
     this.settings = settings;
