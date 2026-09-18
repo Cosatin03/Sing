@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assignPhrases, displayScore, pitchDistance, scoreFrame } from "../site/js/scoring.js";
+import { assignPhrases, displayScore, maximumScoreWeight, pitchDistance, scoreFrame } from "../site/js/scoring.js";
 
 test("pitch comparison accepts octave equivalents", () => {
   assert.ok(pitchDistance(69, 81.05) < 10);
@@ -12,6 +12,15 @@ test("pitch comparison accepts octave equivalents", () => {
 test("normalized score is capped by accumulated quality", () => {
   assert.equal(displayScore(4, 5), 8000);
   assert.equal(displayScore(0, 0), 0);
+});
+
+test("maximum score uses note duration, doubles golden notes and ignores freestyle", () => {
+  const phrases = [{ notes: [
+    { type: ":", startMs: 0, endMs: 100 },
+    { type: "*", startMs: 100, endMs: 200 },
+    { type: "F", startMs: 200, endMs: 300 },
+  ] }];
+  assert.equal(maximumScoreWeight(phrases), 300);
 });
 
 test("solo phrases are distributed across every player", () => {

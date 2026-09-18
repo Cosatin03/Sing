@@ -1,4 +1,4 @@
-import { activeNote, displayScore, scoreFrame } from "./scoring.js";
+import { activeNote, displayScore, frequencyToMidi, maximumScoreWeight, scoreFrame } from "./scoring.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -32,7 +32,14 @@ function roundedRect(context, x, y, width, height, radius) {
   context.roundRect(x, y, width, height, safeRadius);
 }
 
-function drawPhrase(canvas, phrase, timeMs, color) {
+function pitchInPhraseRange(frequency, minPitch, maxPitch) {
+  const midi = frequencyToMidi(frequency);
+  if (midi == null || !Number.isFinite(midi)) return null;
+  const center = (minPitch + maxPitch) / 2;
+  return midi + Math.round((center - midi) / 12) * 12;
+}
+
+function drawPhrase(canvas, phrase, timeMs, color, frequency) {
   const { context, width, height } = resizeCanvas(canvas);
   context.clearRect(0, 0, width, height);
   context.fillStyle = "rgba(255,255,255,.018)";
@@ -99,6 +106,30 @@ function drawPhrase(canvas, phrase, timeMs, color) {
   context.moveTo(cursorX, 5);
   context.lineTo(cursorX, height - 5);
   context.stroke();
+
+  const sungPitch = pitchInPhraseRange(frequency, minPitch, maxPitch);
+  if (sungPitch != null) {
+    const rawY = padY + (maxPitch - sungPitch) / range * usableHeight;
+    const markerY = Math.max(padY, Math.min(padY + usableHeight, rawY));
+    context.save();
+    context.shadowColor = color;
+    context.shadowBlur = 18;
+    context.strokeStyle = color;
+    context.fillStyle = "white";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.moveTo(cursorX - 17, markerY);
+    context.lineTo(cursorX + 17, markerY);
+    context.stroke();
+    context.beginPath();
+    context.arc(cursorX, markerY, 6, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+}
+
+function lyricPieceText(text) {
+  return String(text ?? "").replaceAll("~", "").replaceAll(" ", "\u00a0");
 }
 
 function updateLyric(view, phrase, timeMs) {
@@ -113,7 +144,7 @@ function updateLyric(view, phrase, timeMs) {
   if (view.phraseId !== phrase.id) {
     view.current.replaceChildren();
     view.lyricNotes = phrase.notes.map((note) => {
-      const piece = el("span", "lyric-piece", note.text.replaceAll("~", ""));
+      const piece = el("span", "lyric-piece", lyricPieceText(note.text));
       view.current.append(piece);
       return { note, piece };
     });
@@ -139,7 +170,11 @@ export class KaraokeGame {
     this.running = false;
     this.frame = 0;
     this.lastJudge = 0;
-    this.stats = players.map(() => ({ hit: 0, total: 0, score: 0 }));
+    this.stats = tracks.map((phrases) => ({
+      earned: 0,
+      maximum: maximumScoreWeight(phrases),
+      score: 0,
+    }));
     this.rows = [];
     this.boundEnded = () => this.finish();
   }
@@ -176,6 +211,7 @@ export class KaraokeGame {
     this.audio.addEventListener("ended", this.boundEnded, { once: true });
     try {
       await this.audio.play();
+      this.lastJudge = performance.now();
       this.loop();
     } catch (error) {
       this.running = false;
@@ -189,25 +225,37 @@ export class KaraokeGame {
     const now = performance.now();
     const timeMs = this.audio.currentTime * 1000;
     const judgeTime = timeMs - this.inputLatencyMs;
+    const shouldJudge = !this.audio.paused && now - this.lastJudge >= 45;
+    const judgeDuration = Math.min(100, Math.max(0, now - this.lastJudge));
+
+    if (this.audio.ended || (
+      Number.isFinite(this.audio.duration)
+      && this.audio.duration > 0
+      && this.audio.currentTime >= this.audio.duration - 0.08
+    )) {
+      this.finish();
+      return;
+    }
 
     this.rows.forEach((view, index) => {
       const phrases = this.tracks[index];
       const window = currentAndNext(phrases, timeMs);
+      const reading = this.inputs[index]?.read() || { frequency: null, rms: 0 };
       updateLyric(view, window.current, timeMs);
       view.next.textContent = window.next ? window.next.text : "";
-      drawPhrase(view.canvas, window.current, timeMs, this.players[index].color);
+      drawPhrase(view.canvas, window.current, timeMs, this.players[index].color, reading.frequency);
 
-      const reading = this.inputs[index]?.read() || { frequency: null, rms: 0 };
       view.level.firstElementChild.style.width = `${Math.min(100, Math.round(reading.rms * 420))}%`;
 
-      if (now - this.lastJudge >= 45) {
+      if (shouldJudge) {
         const note = activeNote(phrases, judgeTime);
         const scored = scoreFrame(note, reading.frequency, this.difficulty, reading.rms);
         if (scored.eligible) {
           const weight = note?.type === "*" || note?.type === "G" ? 2 : 1;
-          this.stats[index].total += weight;
-          if (scored.hit) this.stats[index].hit += scored.quality * weight;
-          this.stats[index].score = displayScore(this.stats[index].hit, this.stats[index].total);
+          const remaining = Math.max(0, note.endMs - judgeTime);
+          const coveredDuration = Math.min(judgeDuration, remaining);
+          if (scored.hit) this.stats[index].earned += scored.quality * coveredDuration * weight;
+          this.stats[index].score = displayScore(this.stats[index].earned, this.stats[index].maximum);
           view.score.textContent = this.stats[index].score.toLocaleString("de-DE");
           view.row.classList.toggle("is-hit", scored.hit);
         } else {
@@ -216,7 +264,7 @@ export class KaraokeGame {
       }
     });
 
-    if (now - this.lastJudge >= 45) this.lastJudge = now;
+    if (shouldJudge || this.audio.paused) this.lastJudge = now;
     this.frame = requestAnimationFrame(this.loop);
   };
 

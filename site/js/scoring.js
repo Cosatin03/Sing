@@ -31,6 +31,16 @@ export function displayScore(hitWeight, totalWeight) {
   return totalWeight > 0 ? Math.round(10000 * hitWeight / totalWeight) : 0;
 }
 
+export function maximumScoreWeight(phrases) {
+  return phrases
+    .flatMap((phrase) => phrase.notes)
+    .filter((note) => note.type !== "F")
+    .reduce((total, note) => {
+      const multiplier = note.type === "*" || note.type === "G" ? 2 : 1;
+      return total + Math.max(0, note.endMs - note.startMs) * multiplier;
+    }, 0);
+}
+
 export function activeNote(phrases, timeMs) {
   for (const phrase of phrases) {
     if (timeMs < phrase.startMs) return null;
