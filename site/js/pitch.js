@@ -73,6 +73,26 @@ export class PitchInput {
     this.analyser.smoothingTimeConstant = 0;
     this.buffer = new Float32Array(this.analyser.fftSize);
     this.settings = settings;
+    this.sampleId = 0;
+    this.pending = false;
+    this.latest = { frequency: null, clarity: 0, rms: 0, sampleId: 0, timeMs: 0 };
+    this.worker = null;
+    if (typeof Worker !== "undefined") {
+      try {
+        this.worker = new Worker(new URL("./pitch-worker.js", import.meta.url), { type: "module" });
+        this.worker.addEventListener("message", ({ data }) => {
+          this.latest = data;
+          this.pending = false;
+        });
+        this.worker.addEventListener("error", () => {
+          this.worker?.terminate();
+          this.worker = null;
+          this.pending = false;
+        });
+      } catch {
+        this.worker = null;
+      }
+    }
     this.source.connect(this.inputGain);
     this.inputGain.connect(this.analyser);
     this.inputGain.connect(this.monitorGain);
@@ -81,9 +101,29 @@ export class PitchInput {
     this.setMonitoring(settings.monitoring ?? false, settings.monitorVolume ?? 0.25);
   }
 
-  read() {
+  read(timeMs = 0) {
+    if (this.worker && this.pending) return this.latest;
     this.analyser.getFloatTimeDomainData(this.buffer);
-    return detectPitch(this.buffer, this.context.sampleRate, { minRms: this.settings.noiseGate ?? 0.012 });
+    const sampleId = ++this.sampleId;
+    const minRms = this.settings.noiseGate ?? 0.012;
+    if (!this.worker) {
+      this.latest = {
+        ...detectPitch(this.buffer, this.context.sampleRate, { minRms }),
+        sampleId,
+        timeMs,
+      };
+      return this.latest;
+    }
+    const samples = this.buffer.slice();
+    this.pending = true;
+    this.worker.postMessage({
+      samples: samples.buffer,
+      sampleRate: this.context.sampleRate,
+      minRms,
+      sampleId,
+      timeMs,
+    }, [samples.buffer]);
+    return this.latest;
   }
 
   setInputGain(value) {
@@ -103,6 +143,8 @@ export class PitchInput {
   }
 
   stop() {
+    this.worker?.terminate();
+    this.worker = null;
     this.source.disconnect();
     this.inputGain.disconnect();
     this.monitorGain.disconnect();

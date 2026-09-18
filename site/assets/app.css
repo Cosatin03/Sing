@@ -112,8 +112,8 @@ input[type="range"] { height: 22px; padding: 0; border: 0; accent-color: var(--p
 .game-players[data-players="1"] { grid-template-columns: 1fr; }
 .game-players[data-players="2"] { grid-template-columns: 1fr; grid-template-rows: repeat(2, minmax(0, 1fr)); padding-block: 20px; }
 .game-players[data-players="3"], .game-players[data-players="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); padding: 18px 28px; }
-.player-stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto auto minmax(120px, 1fr); align-content: center; padding: clamp(12px, 1.7vw, 25px); border: 1px solid rgba(255,255,255,.065); border-left: 3px solid var(--player); border-radius: 18px; background: rgba(10,14,30,.46); box-shadow: inset 0 0 0 1px transparent; transition: .12s; backdrop-filter: blur(8px); }
-.player-stage.is-hit { box-shadow: inset 0 0 50px color-mix(in srgb, var(--player) 13%, transparent); }
+.player-stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto auto minmax(120px, 1fr); align-content: center; padding: clamp(12px, 1.7vw, 25px); border: 1px solid rgba(255,255,255,.065); border-left: 3px solid var(--player); border-radius: 18px; background: rgba(10,14,30,.82); transition: border-color .12s, background-color .12s; }
+.player-stage.is-hit { border-color: color-mix(in srgb, var(--player) 55%, rgba(255,255,255,.1)); background: color-mix(in srgb, var(--player) 7%, #0a0e1e); }
 .player-stage__header, .player-stage__identity, .player-stage__telemetry { display: flex; align-items: center; gap: 9px; }
 .player-stage__header { justify-content: space-between; }
 .player-stage__telemetry { justify-content: end; flex-wrap: wrap; }

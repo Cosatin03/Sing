@@ -15,6 +15,7 @@ const state = {
   gameInputs: [],
   gamePlayers: [],
   progressFrame: 0,
+  lastProgressAt: 0,
 };
 const deviceManager = new DeviceManager();
 const audio = $("#songAudio");
@@ -374,6 +375,7 @@ async function startGame() {
       onEnd: showResults,
     });
     await state.game.start();
+    state.lastProgressAt = 0;
     progressLoop();
   } catch (error) {
     openedInputs.forEach((input) => input.stop());
@@ -389,9 +391,12 @@ async function startGame() {
   }
 }
 
-function progressLoop() {
-  const duration = Number.isFinite(audio.duration) ? audio.duration : state.activeSong?.durationMs / 1000;
-  $("#gameProgress").style.width = `${duration ? Math.min(100, audio.currentTime / duration * 100) : 0}%`;
+function progressLoop(now = performance.now()) {
+  if (now - state.lastProgressAt >= 100) {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : state.activeSong?.durationMs / 1000;
+    $("#gameProgress").style.width = `${duration ? Math.min(100, audio.currentTime / duration * 100) : 0}%`;
+    state.lastProgressAt = now;
+  }
   if (state.game?.running) state.progressFrame = requestAnimationFrame(progressLoop);
 }
 

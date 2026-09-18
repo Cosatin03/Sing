@@ -46,16 +46,33 @@ function notesInWindow(notes, windowStart, windowEnd, startIndex = 0) {
 }
 
 export function targetPitchBounds(notes) {
-  const pitched = notes.filter((note) => note.type !== "F");
-  if (!pitched.length) return { min: -6, max: 6 };
-  const values = pitched.map((note) => note.pitch);
-  const low = Math.min(...values);
-  const high = Math.max(...values);
+  let low = Infinity;
+  let high = -Infinity;
+  for (const note of notes) {
+    if (note.type === "F") continue;
+    low = Math.min(low, note.pitch);
+    high = Math.max(high, note.pitch);
+  }
+  if (!Number.isFinite(low)) return { min: -6, max: 6 };
   const center = (low + high) / 2;
   // Every visible note must remain inside the lane. The previous 20-semitone
   // cap pushed later notes onto one shared edge for previews above ~3 seconds.
   const range = Math.max(12, high - low + 4);
   return { min: center - range / 2, max: center + range / 2 };
+}
+
+export function appendFeedbackSegment(segments, note, startMs, endMs, hit) {
+  if (!note || endMs <= startMs) return;
+  const previous = segments.at(-1);
+  if (
+    previous?.note === note
+    && previous.hit === hit
+    && startMs - previous.endMs < ANALYSIS_INTERVAL_MS * 1.5
+  ) {
+    previous.endMs = Math.max(previous.endMs, endMs);
+    return;
+  }
+  segments.push({ note, startMs, endMs, hit });
 }
 
 function drawLane(canvas, notes, timeMs, color, hitSegments, futureSeconds, pitchScale) {
@@ -133,6 +150,7 @@ function drawLane(canvas, notes, timeMs, color, hitSegments, futureSeconds, pitc
       context.clip();
       context.fillStyle = color;
       for (const hit of hits) {
+        context.fillStyle = hit.hit ? color : "#ff5f7f";
         const hitX = Math.max(x, xForTime(hit.startMs));
         const hitRight = Math.min(right - 2, xForTime(hit.endMs));
         if (hitRight > hitX) context.fillRect(hitX, y, hitRight - hitX, barHeight);
@@ -241,8 +259,10 @@ export class KaraokeGame {
       this.root.append(row);
       this.rows.push({
         row, current, next, canvas, level, score,
-        phraseId: null, lyricNotes: [], hitSegments: [],
-        reading: { frequency: null, rms: 0 }, visibleStart: 0, pitchScale: { min: null, max: null },
+        phraseId: null, lyricNotes: [], feedbackSegments: [],
+        reading: { frequency: null, rms: 0, sampleId: 0, timeMs: 0 },
+        lastSampleId: 0, lastReadingTime: null, levelPercent: -1,
+        visibleStart: 0, pitchScale: { min: null, max: null },
       });
     });
   }
@@ -269,7 +289,6 @@ export class KaraokeGame {
     const judgeTime = timeMs - this.inputLatencyMs;
     const shouldJudge = !this.audio.paused && now - this.lastJudge >= ANALYSIS_INTERVAL_MS;
     const shouldRender = now - this.lastRender >= (this.audio.paused ? 100 : RENDER_INTERVAL_MS);
-    const judgeDuration = Math.min(120, Math.max(0, now - this.lastJudge));
 
     if (this.audio.ended || (
       Number.isFinite(this.audio.duration)
@@ -283,29 +302,43 @@ export class KaraokeGame {
     this.rows.forEach((view, index) => {
       const phrases = this.tracks[index];
       if (shouldJudge) {
-        view.reading = this.inputs[index]?.read() || { frequency: null, rms: 0 };
-        const note = activeNote(phrases, judgeTime);
-        const scored = scoreFrame(note, view.reading.frequency, this.difficulty, view.reading.rms);
-        if (scored.eligible) {
-          const weight = note?.type === "*" || note?.type === "G" ? 2 : 1;
-          const remaining = Math.max(0, note.endMs - judgeTime);
-          const coveredDuration = Math.min(judgeDuration, remaining);
-          if (scored.hit) {
-            this.stats[index].earned += scored.quality * coveredDuration * weight;
-            const startMs = Math.max(note.startMs, judgeTime - judgeDuration);
-            const endMs = Math.min(note.endMs, judgeTime);
-            const previous = view.hitSegments.at(-1);
-            if (previous?.note === note && startMs - previous.endMs < ANALYSIS_INTERVAL_MS * 1.5) {
-              previous.endMs = Math.max(previous.endMs, endMs);
-            } else if (endMs > startMs) {
-              view.hitSegments.push({ note, startMs, endMs });
+        view.reading = this.inputs[index]?.read(judgeTime) || view.reading;
+        if (view.reading.sampleId > view.lastSampleId) {
+          const readingTime = Number.isFinite(view.reading.timeMs) ? view.reading.timeMs : judgeTime;
+          const sampleDuration = Math.min(180, Math.max(
+            1,
+            view.lastReadingTime == null ? ANALYSIS_INTERVAL_MS : readingTime - view.lastReadingTime,
+          ));
+          const note = activeNote(phrases, readingTime);
+          const scored = scoreFrame(note, view.reading.frequency, this.difficulty, view.reading.rms);
+          const attempted = view.reading.frequency != null && view.reading.rms >= 0.008;
+          if (scored.eligible) {
+            const weight = note?.type === "*" || note?.type === "G" ? 2 : 1;
+            const remaining = Math.max(0, note.endMs - readingTime);
+            const coveredDuration = Math.min(sampleDuration, remaining);
+            if (scored.hit) {
+              this.stats[index].earned += scored.quality * coveredDuration * weight;
             }
+            if (scored.hit || attempted) {
+              appendFeedbackSegment(
+                view.feedbackSegments,
+                note,
+                Math.max(note.startMs, readingTime - sampleDuration),
+                Math.min(note.endMs, readingTime),
+                scored.hit,
+              );
+            }
+            const nextScore = displayScore(this.stats[index].earned, this.stats[index].maximum);
+            if (nextScore !== this.stats[index].score) {
+              this.stats[index].score = nextScore;
+              view.score.textContent = nextScore.toLocaleString("de-DE");
+            }
+            view.row.classList.toggle("is-hit", scored.hit);
+          } else {
+            view.row.classList.remove("is-hit");
           }
-          this.stats[index].score = displayScore(this.stats[index].earned, this.stats[index].maximum);
-          view.score.textContent = this.stats[index].score.toLocaleString("de-DE");
-          view.row.classList.toggle("is-hit", scored.hit);
-        } else {
-          view.row.classList.remove("is-hit");
+          view.lastSampleId = view.reading.sampleId;
+          view.lastReadingTime = readingTime;
         }
       }
 
@@ -315,14 +348,19 @@ export class KaraokeGame {
         const windowEnd = timeMs + this.futureSeconds * 1000;
         const visible = notesInWindow(this.noteTracks[index], windowStart, windowEnd, view.visibleStart);
         view.visibleStart = visible.startIndex;
-        while (view.hitSegments[0]?.endMs < windowStart) view.hitSegments.shift();
+        while (view.feedbackSegments[0]?.endMs < windowStart) view.feedbackSegments.shift();
         updateLyric(view, window.current, timeMs);
-        view.next.textContent = window.next ? window.next.text : "";
+        const nextText = window.next ? window.next.text : "";
+        if (view.next.textContent !== nextText) view.next.textContent = nextText;
         drawLane(
           view.canvas, visible.notes, timeMs, this.players[index].color,
-          view.hitSegments, this.futureSeconds, view.pitchScale,
+          view.feedbackSegments, this.futureSeconds, view.pitchScale,
         );
-        view.level.firstElementChild.style.width = `${Math.min(100, Math.round(view.reading.rms * 420))}%`;
+        const levelPercent = Math.min(100, Math.round(view.reading.rms * 420));
+        if (levelPercent !== view.levelPercent) {
+          view.levelPercent = levelPercent;
+          view.level.firstElementChild.style.width = `${levelPercent}%`;
+        }
       }
     });
 
