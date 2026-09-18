@@ -63,5 +63,8 @@ export async function importSongFiles(fileList) {
 }
 
 export function releaseSongs(songs) {
-  for (const song of songs) if (song.audioUrl) URL.revokeObjectURL(song.audioUrl);
+  for (const song of songs) {
+    if (song.audioUrl) URL.revokeObjectURL(song.audioUrl);
+    if (song.instrumentalUrl) URL.revokeObjectURL(song.instrumentalUrl);
+  }
 }

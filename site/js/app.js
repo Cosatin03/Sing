@@ -1,6 +1,7 @@
 import { DeviceManager, deviceLabel } from "./devices.js";
 import { KaraokeGame } from "./game.js";
 import { importSongFiles, releaseSongs } from "./importer.js";
+import { createInstrumentalVersion } from "./instrumental.js";
 import { assignPhrases } from "./scoring.js";
 import { parseUltraStar } from "./ultrastar.js";
 
@@ -8,8 +9,11 @@ const $ = (selector) => document.querySelector(selector);
 const state = {
   songs: [],
   activeSong: null,
+  currentVersion: "original",
   devices: { inputs: [], outputs: [] },
   game: null,
+  gameInputs: [],
+  gamePlayers: [],
   progressFrame: 0,
 };
 const deviceManager = new DeviceManager();
@@ -18,21 +22,31 @@ const colors = ["#ff4db8", "#35d9f3", "#ffc857", "#7dff9d"];
 let saved = {};
 try { saved = JSON.parse(localStorage.getItem("sing-local-settings") || "{}"); } catch { saved = {}; }
 
-function saveSettings() {
-  const playerCount = Number($("#playerCount").value);
-  const players = [...$("#playerSettings").children].slice(0, playerCount).map((row) => ({
-    name: row.querySelector("[data-name]").value,
-    mic: row.querySelector("[data-mic]").value,
-    color: row.querySelector("[data-color]").value,
+function persistSettings() {
+  localStorage.setItem("sing-local-settings", JSON.stringify(saved));
+}
+
+function readPlayerRows() {
+  return [...$("#playerSettings").children].map((row) => ({
+    name: row.querySelector("[data-name]")?.value || "",
+    mic: row.querySelector("[data-mic]")?.value || "",
+    color: row.querySelector("[data-color]")?.value || "#ff4db8",
+    inputGain: Number(row.querySelector("[data-input-gain]")?.value ?? 100),
+    monitorVolume: Number(row.querySelector("[data-monitor-volume]")?.value ?? 25),
   }));
+}
+
+function saveSettings() {
   Object.assign(saved, {
-    playerCount,
+    playerCount: Number($("#playerCount").value),
     difficulty: $("#difficulty").value,
     output: $("#outputDevice").value,
     inputLatency: Number($("#inputLatency").value),
-    players,
+    musicVolume: Number($("#musicVolume").value),
+    monitorEnabled: $("#monitorEnabled").checked,
+    players: readPlayerRows(),
   });
-  localStorage.setItem("sing-local-settings", JSON.stringify(saved));
+  persistSettings();
 }
 
 function message(text, success = false, target = $("#messages")) {
@@ -40,6 +54,55 @@ function message(text, success = false, target = $("#messages")) {
   node.className = `message${success ? " message--success" : ""}`;
   node.textContent = text;
   target.append(node);
+}
+
+function songSource(song, version) {
+  return version === "instrumental" && song.instrumentalUrl ? song.instrumentalUrl : song.audioUrl;
+}
+
+function createRange({ label, value, minimum, maximum, step = 1, suffix = "%", data }) {
+  const field = document.createElement("label");
+  field.className = "range-field player-range";
+  const title = document.createElement("span");
+  title.textContent = label;
+  const output = document.createElement("output");
+  output.textContent = `${value} ${suffix}`;
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = minimum;
+  input.max = maximum;
+  input.step = step;
+  input.value = value;
+  input.dataset[data] = "";
+  input.addEventListener("input", () => { output.textContent = `${input.value} ${suffix}`; });
+  field.append(title, output, input);
+  return field;
+}
+
+async function makeInstrumental(song, button) {
+  button.disabled = true;
+  const dialog = $("#instrumentalDialog");
+  $("#instrumentalTitle").textContent = `${song.artist} – ${song.title}`;
+  $("#instrumentalProgress").value = 0;
+  $("#instrumentalStatus").textContent = "Audiodatei wird vorbereitet …";
+  $("#closeInstrumental").disabled = true;
+  dialog.showModal();
+  try {
+    const result = await createInstrumentalVersion(song.audioFile, (progress, status) => {
+      $("#instrumentalProgress").value = progress;
+      $("#instrumentalStatus").textContent = status;
+    });
+    if (song.instrumentalUrl) URL.revokeObjectURL(song.instrumentalUrl);
+    song.instrumentalBlob = result.blob;
+    song.instrumentalUrl = result.url;
+    song.instrumentalDuration = result.duration;
+    renderSongs();
+  } catch (error) {
+    $("#instrumentalStatus").textContent = `Nicht möglich: ${error.message}`;
+  } finally {
+    $("#closeInstrumental").disabled = false;
+    button.disabled = false;
+  }
 }
 
 function renderSongs() {
@@ -54,6 +117,12 @@ function renderSongs() {
     const meta = document.createElement("div");
     meta.className = "song-card__meta";
     meta.textContent = `${song.isDuet ? `${song.voices.length} Stimmen` : "Solo"} · ${song.metadata.LANGUAGE || "Sprache offen"}`;
+    if (song.instrumentalUrl) {
+      const badge = document.createElement("span");
+      badge.className = "song-badge";
+      badge.textContent = "Instrumental bereit";
+      meta.append(badge);
+    }
     const title = document.createElement("h3");
     title.textContent = song.title;
     const artist = document.createElement("p");
@@ -64,13 +133,18 @@ function renderSongs() {
     play.className = "button button--primary";
     play.textContent = "Singen";
     play.addEventListener("click", () => openSetup(song));
+    const instrumental = document.createElement("button");
+    instrumental.className = "button button--quiet";
+    instrumental.textContent = song.instrumentalUrl ? "Instrumental neu" : "Instrumental";
+    instrumental.title = "Lokale Version mit reduzierten Center-Vocals erstellen";
+    instrumental.addEventListener("click", () => makeInstrumental(song, instrumental));
     const edit = document.createElement("button");
     edit.className = "icon-button";
     edit.title = "TXT bearbeiten";
     edit.setAttribute("aria-label", "TXT bearbeiten");
     edit.textContent = "✎";
     edit.addEventListener("click", () => openEditor(song));
-    actions.append(play, edit);
+    actions.append(play, instrumental, edit);
     card.append(meta, title, artist, actions);
     grid.append(card);
   });
@@ -87,39 +161,62 @@ async function addFiles(files) {
 
 function fillDeviceSelect(select, devices, type, selected) {
   select.replaceChildren();
-  if (type === "Lautsprecher") {
-    const option = new Option("Systemstandard", "default");
-    select.add(option);
-  }
+  if (type === "Lautsprecher") select.add(new Option("Systemstandard", "default"));
   devices.forEach((device, index) => select.add(new Option(deviceLabel(device, index, type), device.deviceId)));
   if (selected && [...select.options].some((option) => option.value === selected)) select.value = selected;
 }
 
 function renderPlayerSettings() {
   const container = $("#playerSettings");
+  const drafts = readPlayerRows();
   const count = Number($("#playerCount").value);
   container.replaceChildren();
   for (let index = 0; index < count; index += 1) {
-    const prior = saved.players?.[index] || {};
-    const row = document.createElement("div");
+    const prior = drafts[index] || saved.players?.[index] || {};
+    const row = document.createElement("section");
     row.className = "player-setting";
+    row.style.setProperty("--player", prior.color || colors[index]);
+    const top = document.createElement("div");
+    top.className = "player-setting__top";
     const name = document.createElement("input");
     name.dataset.name = "";
     name.value = prior.name || `Spieler ${index + 1}`;
     name.setAttribute("aria-label", `Name Spieler ${index + 1}`);
-    const mic = document.createElement("select");
-    mic.dataset.mic = "";
-    mic.setAttribute("aria-label", `Mikrofon Spieler ${index + 1}`);
-    fillDeviceSelect(mic, state.devices.inputs, "Mikrofon", prior.mic);
-    if (!state.devices.inputs.length) mic.add(new Option("Erst Geräte freigeben", ""));
     const color = document.createElement("input");
     color.dataset.color = "";
     color.type = "color";
     color.value = prior.color || colors[index];
     color.setAttribute("aria-label", `Farbe Spieler ${index + 1}`);
-    row.append(name, mic, color);
+    color.addEventListener("input", () => row.style.setProperty("--player", color.value));
+    top.append(name, color);
+    const micLabel = document.createElement("label");
+    micLabel.textContent = "Mikrofon";
+    const mic = document.createElement("select");
+    mic.dataset.mic = "";
+    mic.setAttribute("aria-label", `Mikrofon Spieler ${index + 1}`);
+    fillDeviceSelect(mic, state.devices.inputs, "Mikrofon", prior.mic);
+    if (!state.devices.inputs.length) mic.add(new Option("Erst Geräte freigeben", ""));
+    micLabel.append(mic);
+    const levels = document.createElement("div");
+    levels.className = "player-setting__levels";
+    levels.append(
+      createRange({ label: "Mikrofon", value: prior.inputGain ?? 100, minimum: 0, maximum: 200, data: "inputGain" }),
+      createRange({ label: "Ausgabe", value: prior.monitorVolume ?? 25, minimum: 0, maximum: 100, data: "monitorVolume" }),
+    );
+    row.append(top, micLabel, levels);
     container.append(row);
   }
+}
+
+function renderVersionOptions(song) {
+  const select = $("#songVersion");
+  select.replaceChildren(new Option("Original mit Gesang", "original"));
+  if (song.instrumentalUrl) select.add(new Option("Instrumental – Gesang reduziert", "instrumental"));
+  select.value = song.instrumentalUrl ? "instrumental" : "original";
+}
+
+function syncRange(input, output) {
+  output.textContent = `${input.value} %`;
 }
 
 function openSetup(song) {
@@ -128,6 +225,10 @@ function openSetup(song) {
   $("#playerCount").value = saved.playerCount || (song.isDuet ? 2 : 1);
   $("#difficulty").value = saved.difficulty || "normal";
   $("#inputLatency").value = saved.inputLatency ?? 120;
+  $("#musicVolume").value = saved.musicVolume ?? 85;
+  $("#monitorEnabled").checked = saved.monitorEnabled ?? false;
+  syncRange($("#musicVolume"), $("#musicVolumeValue"));
+  renderVersionOptions(song);
   fillDeviceSelect($("#outputDevice"), state.devices.outputs, "Lautsprecher", saved.output);
   renderPlayerSettings();
   $("#setupDialog").showModal();
@@ -151,11 +252,72 @@ async function grantDevices() {
 }
 
 function playerConfiguration() {
-  return [...$("#playerSettings").children].map((row) => ({
-    name: row.querySelector("[data-name]").value.trim() || "Spieler",
-    deviceId: row.querySelector("[data-mic]").value,
-    color: row.querySelector("[data-color]").value,
+  return readPlayerRows().map((player) => ({
+    name: player.name.trim() || "Spieler",
+    deviceId: player.mic,
+    color: player.color,
+    inputGain: player.inputGain / 100,
+    monitorVolume: player.monitorVolume / 100,
   }));
+}
+
+function updateVersionButton() {
+  const button = $("#toggleVersion");
+  button.hidden = !state.activeSong?.instrumentalUrl;
+  button.textContent = state.currentVersion === "instrumental" ? "Ohne Vocals" : "Original";
+  button.classList.toggle("is-instrumental", state.currentVersion === "instrumental");
+}
+
+function createLiveRange(labelText, value, onInput, maximum = 100) {
+  const label = document.createElement("label");
+  label.className = "range-field";
+  const title = document.createElement("span");
+  title.textContent = labelText;
+  const output = document.createElement("output");
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = "0";
+  input.max = String(maximum);
+  input.value = String(Math.round(value * 100));
+  const update = () => {
+    output.textContent = `${input.value} %`;
+    onInput(Number(input.value) / 100);
+  };
+  input.addEventListener("input", update);
+  output.textContent = `${input.value} %`;
+  label.append(title, output, input);
+  return label;
+}
+
+function renderGameMixer(players, inputs) {
+  $("#gameMusicVolume").value = String(Math.round(audio.volume * 100));
+  syncRange($("#gameMusicVolume"), $("#gameMusicVolumeValue"));
+  $("#gameMonitorEnabled").checked = $("#monitorEnabled").checked;
+  const container = $("#gameMicMixers");
+  container.replaceChildren();
+  players.forEach((player, index) => {
+    const section = document.createElement("section");
+    section.className = "game-mic-mixer";
+    section.style.setProperty("--player", player.color);
+    const title = document.createElement("strong");
+    title.textContent = player.name;
+    section.append(
+      title,
+      createLiveRange("Mikrofon", player.inputGain, (value) => {
+        player.inputGain = value;
+        inputs[index].setInputGain(value);
+        if (saved.players?.[index]) saved.players[index].inputGain = Math.round(value * 100);
+        persistSettings();
+      }, 200),
+      createLiveRange("Ausgabe", player.monitorVolume, (value) => {
+        player.monitorVolume = value;
+        inputs[index].setMonitorVolume(value);
+        if (saved.players?.[index]) saved.players[index].monitorVolume = Math.round(value * 100);
+        persistSettings();
+      }),
+    );
+    container.append(section);
+  });
 }
 
 async function startGame() {
@@ -172,32 +334,44 @@ async function startGame() {
 
   button.disabled = true;
   button.textContent = "Mikrofone werden geöffnet …";
+  let openedInputs = [];
   try {
     saveSettings();
-    audio.src = state.activeSong.audioUrl;
+    state.currentVersion = $("#songVersion").value;
+    audio.src = songSource(state.activeSong, state.currentVersion);
+    audio.volume = Number($("#musicVolume").value) / 100;
     audio.muted = true;
     await audio.play();
     audio.pause();
     audio.currentTime = 0;
     audio.muted = false;
-    const inputs = await deviceManager.openInputs(players.map((player) => player.deviceId));
+    openedInputs = await deviceManager.openInputs(players, { monitoring: $("#monitorEnabled").checked });
     const output = await deviceManager.setOutput(audio, $("#outputDevice").value);
     if (!output.supported) $("#deviceHint").textContent = "Der Browser unterstützt keine Lautsprecherauswahl; Systemstandard wird verwendet.";
+    if (!output.monitorSupported && $("#monitorEnabled").checked) {
+      $("#deviceHint").textContent = "Musik nutzt die gewählte Ausgabe, Mikrofon-Monitoring den Systemstandard.";
+    }
     const tracks = assignPhrases(state.activeSong, players.length);
     $("#setupDialog").close();
     $("#home").hidden = true;
     $("#gameScreen").hidden = false;
     $("#gameArtist").textContent = state.activeSong.artist;
     $("#gameTitle").textContent = state.activeSong.title;
+    state.gameInputs = openedInputs;
+    state.gamePlayers = players;
+    renderGameMixer(players, openedInputs);
+    updateVersionButton();
     state.game = new KaraokeGame({
-      root: $("#gamePlayers"), audio, song: state.activeSong, players, tracks, inputs,
+      root: $("#gamePlayers"), audio, song: state.activeSong, players, tracks, inputs: openedInputs,
       difficulty: $("#difficulty").value,
       inputLatencyMs: Number($("#inputLatency").value) || 0,
       onEnd: showResults,
     });
-    progressLoop();
     await state.game.start();
+    progressLoop();
   } catch (error) {
+    openedInputs.forEach((input) => input.stop());
+    state.game = null;
     audio.pause();
     audio.muted = false;
     $("#deviceHint").textContent = `Start fehlgeschlagen: ${error.message}`;
@@ -222,8 +396,11 @@ function stopGame() {
 function showResults(stats) {
   cancelAnimationFrame(state.progressFrame);
   state.game = null;
+  state.gameInputs = [];
+  state.gamePlayers = [];
   audio.removeAttribute("src");
   audio.load();
+  $("#gameMixer").hidden = true;
   $("#gameScreen").hidden = true;
   $("#home").hidden = false;
   const results = $("#results");
@@ -242,6 +419,23 @@ function showResults(stats) {
   $("#resultDialog").showModal();
 }
 
+async function toggleGameVersion() {
+  if (!state.game || !state.activeSong?.instrumentalUrl) return;
+  const button = $("#toggleVersion");
+  const next = state.currentVersion === "original" ? "instrumental" : "original";
+  button.disabled = true;
+  button.textContent = "Wechsel …";
+  try {
+    await state.game.switchAudio(songSource(state.activeSong, next));
+    state.currentVersion = next;
+  } catch (error) {
+    button.title = error.message;
+  } finally {
+    button.disabled = false;
+    updateVersionButton();
+  }
+}
+
 function openEditor(song) {
   state.activeSong = song;
   $("#editorTitle").textContent = `${song.artist} – ${song.title}`;
@@ -254,12 +448,16 @@ function applyEditor() {
   $("#editorMessage").replaceChildren();
   try {
     const updated = parseUltraStar($("#editorText").value, state.activeSong.filename);
-    Object.assign(state.activeSong, updated, {
+    const preserved = {
       id: state.activeSong.id,
       audioFile: state.activeSong.audioFile,
       audioUrl: state.activeSong.audioUrl,
       sourcePath: state.activeSong.sourcePath,
-    });
+      instrumentalBlob: state.activeSong.instrumentalBlob,
+      instrumentalUrl: state.activeSong.instrumentalUrl,
+      instrumentalDuration: state.activeSong.instrumentalDuration,
+    };
+    Object.assign(state.activeSong, updated, preserved);
     renderSongs();
     message("TXT ist gültig und wurde für diese Sitzung übernommen.", true, $("#editorMessage"));
   } catch (error) {
@@ -280,10 +478,26 @@ $("#fileInput").addEventListener("change", (event) => addFiles(event.target.file
 $("#folderInput").addEventListener("change", (event) => addFiles(event.target.files));
 $("#playerCount").addEventListener("change", renderPlayerSettings);
 $("#grantDevices").addEventListener("click", grantDevices);
+$("#musicVolume").addEventListener("input", () => syncRange($("#musicVolume"), $("#musicVolumeValue")));
 $("#startGame").addEventListener("click", startGame);
 $("#stopGame").addEventListener("click", stopGame);
 $("#pauseGame").addEventListener("click", () => state.game?.pause());
 $("#fullscreenGame").addEventListener("click", () => document.fullscreenElement ? document.exitFullscreen() : $("#gameScreen").requestFullscreen());
+$("#toggleVersion").addEventListener("click", toggleGameVersion);
+$("#gameMixerToggle").addEventListener("click", () => { $("#gameMixer").hidden = !$("#gameMixer").hidden; });
+$("#closeGameMixer").addEventListener("click", () => { $("#gameMixer").hidden = true; });
+$("#gameMusicVolume").addEventListener("input", () => {
+  audio.volume = Number($("#gameMusicVolume").value) / 100;
+  syncRange($("#gameMusicVolume"), $("#gameMusicVolumeValue"));
+  saved.musicVolume = Number($("#gameMusicVolume").value);
+  persistSettings();
+});
+$("#gameMonitorEnabled").addEventListener("change", () => {
+  const enabled = $("#gameMonitorEnabled").checked;
+  state.gameInputs.forEach((input, index) => input.setMonitoring(enabled, state.gamePlayers[index].monitorVolume));
+  saved.monitorEnabled = enabled;
+  persistSettings();
+});
 $("#applyEditor").addEventListener("click", applyEditor);
 $("#downloadTxt").addEventListener("click", downloadEditor);
 $("#clearSongs").addEventListener("click", () => {

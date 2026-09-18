@@ -10,7 +10,10 @@ Sing Local ist eine vollständig lokale Browser-Karaoke-App für UltraStar-TXT-D
 - Solo-Zeilen reihum auf alle Spieler verteilen; zusätzliche Duett-Spieler teilen sich die jeweiligen Rollen
 - Echtzeit-Tonhöhenerkennung und Wertung in Easy, Normal oder Hard
 - aktuelle und nächste Gesangszeile sowie Silbentext direkt auf den Notenbalken
+- große, bildschirmfüllende Karaoke-Ansicht mit eigener Bahn pro Spieler
+- Musiklautstärke, Mikrofonverstärkung und optionale Mikrofon-Ausgabe pro Spieler
 - Audioausgabe auswählen, wenn der Browser `setSinkId()` unterstützt
+- lokale Instrumental-Version aus Stereo-Audio erzeugen und während des Songs umschalten
 - TXT im Browser prüfen, ändern und wieder herunterladen
 - Spielernamen, Farben, Geräte-IDs, Schwierigkeit und Latenz lokal speichern
 
@@ -27,6 +30,8 @@ Song-TXT und Audiodateien bleiben ausschließlich im Arbeitsspeicher des geöffn
 5. Jedem Spieler ein anderes Mikrofon zuweisen und starten.
 
 Firefox und Safari können die System-Standardausgabe verwenden, unterstützen die direkte Lautsprecherauswahl aber je nach Version nicht. Verfügbare Audioformate hängen vom Browser ab; MP3, WAV und OGG sind die sichersten Varianten.
+
+Die Instrumental-Funktion reduziert das Signal in der Stereomitte und speichert das Ergebnis als temporäre WAV-Version im Arbeitsspeicher. Sie funktioniert besonders bei mittig abgemischtem Gesang. Bei Mono-Dateien oder stark verteilten Vocals kann sie den Gesang nicht zuverlässig entfernen. Mikrofon-Monitoring sollte mit Kopfhörern verwendet werden, um Rückkopplungen zu vermeiden.
 
 ## Lokal entwickeln
 

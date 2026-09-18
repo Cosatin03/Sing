@@ -35,11 +35,11 @@ function roundedRect(context, x, y, width, height, radius) {
 function drawPhrase(canvas, phrase, timeMs, color) {
   const { context, width, height } = resizeCanvas(canvas);
   context.clearRect(0, 0, width, height);
-  context.fillStyle = "rgba(8, 13, 31, .78)";
+  context.fillStyle = "rgba(255,255,255,.018)";
   context.fillRect(0, 0, width, height);
   if (!phrase) {
     context.fillStyle = "rgba(255,255,255,.45)";
-    context.font = "600 16px system-ui";
+    context.font = "600 15px system-ui";
     context.textAlign = "center";
     context.fillText("Keine weitere Zeile", width / 2, height / 2);
     return;
@@ -56,13 +56,23 @@ function drawPhrase(canvas, phrase, timeMs, color) {
   const usableWidth = width - 2 * padX;
   const usableHeight = height - 2 * padY;
 
+  context.strokeStyle = "rgba(255,255,255,.055)";
+  context.lineWidth = 1;
+  for (let guide = 1; guide < 4; guide += 1) {
+    const guideY = padY + usableHeight * guide / 4;
+    context.beginPath();
+    context.moveTo(padX, guideY);
+    context.lineTo(width - padX, guideY);
+    context.stroke();
+  }
+
   for (const note of notes) {
     const x = padX + (note.startMs - phrase.startMs) / span * usableWidth;
     const noteWidth = Math.max(12, (note.endMs - note.startMs) / span * usableWidth - 2);
     const y = note.type === "F"
       ? height / 2 - 13
       : padY + (maxPitch - note.pitch) / range * usableHeight;
-    const barHeight = 26;
+    const barHeight = Math.max(28, Math.min(40, height * 0.16));
     const active = timeMs >= note.startMs && timeMs <= note.endMs;
     context.fillStyle = active ? color : `${color}99`;
     roundedRect(context, x, y, noteWidth, barHeight, 7);
@@ -74,7 +84,7 @@ function drawPhrase(canvas, phrase, timeMs, color) {
     roundedRect(context, x, y, noteWidth, barHeight, 7);
     context.clip();
     context.fillStyle = "#fff";
-    context.font = "700 12px system-ui";
+    context.font = `800 ${Math.max(13, Math.min(17, height * 0.07))}px system-ui`;
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText(note.lyric || "·", x + noteWidth / 2, y + barHeight / 2, Math.max(1, noteWidth - 4));
@@ -89,6 +99,30 @@ function drawPhrase(canvas, phrase, timeMs, color) {
   context.moveTo(cursorX, 5);
   context.lineTo(cursorX, height - 5);
   context.stroke();
+}
+
+function updateLyric(view, phrase, timeMs) {
+  if (!phrase) {
+    if (view.phraseId !== null) {
+      view.current.textContent = "—";
+      view.phraseId = null;
+      view.lyricNotes = [];
+    }
+    return;
+  }
+  if (view.phraseId !== phrase.id) {
+    view.current.replaceChildren();
+    view.lyricNotes = phrase.notes.map((note) => {
+      const piece = el("span", "lyric-piece", note.text.replaceAll("~", ""));
+      view.current.append(piece);
+      return { note, piece };
+    });
+    view.phraseId = phrase.id;
+  }
+  for (const { note, piece } of view.lyricNotes) {
+    piece.classList.toggle("is-active", timeMs >= note.startMs && timeMs <= note.endMs);
+    piece.classList.toggle("is-sung", timeMs > note.endMs);
+  }
 }
 
 export class KaraokeGame {
@@ -112,6 +146,7 @@ export class KaraokeGame {
 
   render() {
     this.root.replaceChildren();
+    this.root.dataset.players = String(this.players.length);
     this.players.forEach((player, index) => {
       const row = el("article", "player-stage");
       row.style.setProperty("--player", player.color);
@@ -119,10 +154,11 @@ export class KaraokeGame {
       const identity = el("div", "player-stage__identity");
       identity.append(el("span", "player-dot"), el("strong", "", player.name));
       const telemetry = el("div", "player-stage__telemetry");
-      const pitch = el("span", "chip", "— Hz");
-      const level = el("span", "chip", "Mic 0%");
+      const level = el("span", "mic-level");
+      level.title = "Mikrofonpegel";
+      level.append(el("i", ""));
       const score = el("strong", "player-score", "0");
-      telemetry.append(pitch, level, score);
+      telemetry.append(level, score);
       header.append(identity, telemetry);
 
       const current = el("div", "lyric lyric--current", "Bereit …");
@@ -130,7 +166,7 @@ export class KaraokeGame {
       const canvas = el("canvas", "pitch-lane");
       row.append(header, current, canvas, next);
       this.root.append(row);
-      this.rows.push({ row, current, next, canvas, pitch, level, score, phraseId: null });
+      this.rows.push({ row, current, next, canvas, level, score, phraseId: null, lyricNotes: [] });
     });
   }
 
@@ -138,8 +174,14 @@ export class KaraokeGame {
     this.render();
     this.running = true;
     this.audio.addEventListener("ended", this.boundEnded, { once: true });
-    await this.audio.play();
-    this.loop();
+    try {
+      await this.audio.play();
+      this.loop();
+    } catch (error) {
+      this.running = false;
+      this.audio.removeEventListener("ended", this.boundEnded);
+      throw error;
+    }
   }
 
   loop = () => {
@@ -151,13 +193,12 @@ export class KaraokeGame {
     this.rows.forEach((view, index) => {
       const phrases = this.tracks[index];
       const window = currentAndNext(phrases, timeMs);
-      view.current.textContent = window.current?.text || "—";
-      view.next.textContent = window.next ? `Als Nächstes: ${window.next.text}` : "";
+      updateLyric(view, window.current, timeMs);
+      view.next.textContent = window.next ? window.next.text : "";
       drawPhrase(view.canvas, window.current, timeMs, this.players[index].color);
 
       const reading = this.inputs[index]?.read() || { frequency: null, rms: 0 };
-      view.pitch.textContent = reading.frequency ? `${Math.round(reading.frequency)} Hz` : "— Hz";
-      view.level.textContent = `Mic ${Math.min(100, Math.round(reading.rms * 420))}%`;
+      view.level.firstElementChild.style.width = `${Math.min(100, Math.round(reading.rms * 420))}%`;
 
       if (now - this.lastJudge >= 45) {
         const note = activeNote(phrases, judgeTime);
@@ -182,6 +223,26 @@ export class KaraokeGame {
   pause() {
     if (this.audio.paused) this.audio.play();
     else this.audio.pause();
+  }
+
+  async switchAudio(url) {
+    const position = this.audio.currentTime;
+    const shouldResume = !this.audio.paused;
+    this.audio.pause();
+    this.audio.src = url;
+    this.audio.load();
+    await new Promise((resolve, reject) => {
+      const ready = () => { cleanup(); resolve(); };
+      const failed = () => { cleanup(); reject(new Error("Die gewählte Song-Version konnte nicht geladen werden.")); };
+      const cleanup = () => {
+        this.audio.removeEventListener("loadedmetadata", ready);
+        this.audio.removeEventListener("error", failed);
+      };
+      this.audio.addEventListener("loadedmetadata", ready, { once: true });
+      this.audio.addEventListener("error", failed, { once: true });
+    });
+    this.audio.currentTime = Math.min(position, Math.max(0, this.audio.duration - 0.1));
+    if (shouldResume) await this.audio.play();
   }
 
   finish() {

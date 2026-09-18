@@ -78,10 +78,20 @@
         <label>Audioausgabe
           <select id="outputDevice"><option value="default">Systemstandard</option></select>
         </label>
+        <label>Song-Version
+          <select id="songVersion"><option value="original">Original mit Gesang</option></select>
+        </label>
         <label>Mikrofon-Latenz (ms)
           <input id="inputLatency" type="number" min="0" max="1000" step="10" value="120">
         </label>
+        <label class="range-field">Musiklautstärke <output id="musicVolumeValue">85 %</output>
+          <input id="musicVolume" type="range" min="0" max="100" value="85">
+        </label>
       </div>
+      <label class="switch-row">
+        <input id="monitorEnabled" type="checkbox">
+        <span><strong>Mikrofone über Lautsprecher hören</strong><small>Am besten mit Kopfhörern nutzen, sonst kann es Rückkopplungen geben.</small></span>
+      </label>
       <div class="device-head">
         <div><strong>Mikrofone zuweisen</strong><small>Erst freigeben, dann jedes USB-Mikro einem Spieler zuordnen.</small></div>
         <button id="grantDevices" type="button" class="button button--small">Geräte freigeben</button>
@@ -89,6 +99,17 @@
       <div id="playerSettings" class="player-settings"></div>
       <p id="deviceHint" class="hint">Die Gerätebezeichnungen erscheinen nach der Browserfreigabe.</p>
       <button id="startGame" type="button" class="button button--primary button--wide">Karaoke starten</button>
+    </form>
+  </dialog>
+
+  <dialog id="instrumentalDialog" class="dialog dialog--small">
+    <form method="dialog" class="dialog__card instrumental-card">
+      <p class="eyebrow">Lokale Verarbeitung</p>
+      <h2 id="instrumentalTitle">Instrumental erstellen</h2>
+      <p id="instrumentalStatus" class="hint">Audiodatei wird vorbereitet …</p>
+      <progress id="instrumentalProgress" max="100" value="0"></progress>
+      <p class="hint">Die Stereomitte wird reduziert. Das funktioniert gut bei mittig abgemischtem Gesang, ersetzt aber keine Studio-Stem-Datei.</p>
+      <button id="closeInstrumental" class="button button--wide" value="close" disabled>Schließen</button>
     </form>
   </dialog>
 
@@ -110,6 +131,8 @@
     <header class="game-topbar">
       <div><span id="gameArtist"></span><strong id="gameTitle"></strong></div>
       <div class="game-controls">
+        <button id="toggleVersion" class="game-pill" hidden>Original</button>
+        <button id="gameMixerToggle" class="icon-button" aria-label="Audiomixer">☷</button>
         <button id="pauseGame" class="icon-button" aria-label="Pause oder fortsetzen">Ⅱ</button>
         <button id="fullscreenGame" class="icon-button" aria-label="Vollbild">⛶</button>
         <button id="stopGame" class="button button--danger">Beenden</button>
@@ -117,6 +140,17 @@
     </header>
     <div class="progress"><span id="gameProgress"></span></div>
     <div id="gamePlayers" class="game-players"></div>
+    <aside id="gameMixer" class="game-mixer" hidden>
+      <header><strong>Audiomixer</strong><button id="closeGameMixer" class="dialog__close" aria-label="Mixer schließen">×</button></header>
+      <label class="range-field">Musik <output id="gameMusicVolumeValue">85 %</output>
+        <input id="gameMusicVolume" type="range" min="0" max="100" value="85">
+      </label>
+      <label class="switch-row switch-row--compact">
+        <input id="gameMonitorEnabled" type="checkbox">
+        <span><strong>Mikrofone hören</strong><small>Kopfhörer vermeiden Rückkopplungen.</small></span>
+      </label>
+      <div id="gameMicMixers" class="game-mic-mixers"></div>
+    </aside>
   </section>
 
   <dialog id="resultDialog" class="dialog">

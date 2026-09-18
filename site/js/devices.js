@@ -25,14 +25,15 @@ export class DeviceManager {
     };
   }
 
-  async openInputs(deviceIds, settings = {}) {
-    if (!deviceIds.length) return [];
+  async openInputs(configurations, settings = {}) {
+    if (!configurations.length) return [];
     this.context ||= new AudioContext({ latencyHint: "interactive" });
     await this.context.resume();
 
     const opened = [];
     try {
-      for (const deviceId of deviceIds) {
+      for (const configuration of configurations) {
+        const deviceId = configuration.deviceId;
         if (!deviceId) throw new Error("Jedem Spieler muss ein Mikrofon zugewiesen sein.");
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -43,7 +44,11 @@ export class DeviceManager {
             channelCount: 1,
           },
         });
-        opened.push(new PitchInput(stream, this.context, settings));
+        opened.push(new PitchInput(stream, this.context, {
+          ...settings,
+          inputGain: configuration.inputGain,
+          monitorVolume: configuration.monitorVolume,
+        }));
       }
       return opened;
     } catch (error) {
@@ -53,10 +58,16 @@ export class DeviceManager {
   }
 
   async setOutput(audioElement, deviceId) {
-    if (!deviceId || deviceId === "default") return { supported: true };
-    if (typeof audioElement.setSinkId !== "function") return { supported: false };
-    await audioElement.setSinkId(deviceId);
-    return { supported: true };
+    const target = deviceId || "default";
+    let mediaSupported = true;
+    let monitorSupported = true;
+    if (target !== "default") {
+      if (typeof audioElement.setSinkId === "function") await audioElement.setSinkId(target);
+      else mediaSupported = false;
+      if (this.context && typeof this.context.setSinkId === "function") await this.context.setSinkId(target);
+      else if (this.context) monitorSupported = false;
+    }
+    return { supported: mediaSupported, monitorSupported };
   }
 }
 
